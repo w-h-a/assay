@@ -1,5 +1,9 @@
 # assay
 
+<div align="center">
+  <img src="./.github/assets/assay.png" alt="Assay Mascot" width="400" />
+</div>
+
 ## Problem
 
 LLMs are collapsing the cost of generating proofs and implementations. When proofs are cheap, the bottleneck shifts to specifications.
