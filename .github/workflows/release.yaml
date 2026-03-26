@@ -26,6 +26,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           noVersionBumpBehavior: current
+          fallbackTag: v0.0.0
 
       - name: Create GitHub Release
         if: ${{ steps.tagger.outputs.next != steps.tagger.outputs.current }}
