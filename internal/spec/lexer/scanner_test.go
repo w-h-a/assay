@@ -176,27 +176,105 @@ func TestNextTokenInvalidEscape(t *testing.T) {
 	require.Equal(t, 1, tok.Pos.Column)
 }
 
-func TestNextTokenIntegerLiteral(t *testing.T) {
-	// arrange
-	l := New("42", "test.assay")
+func TestNextTokenNumericLiterals(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		kind    TokenKind
+		literal string
+	}{
+		{"integer", "42", INT_LIT, "42"},
+		{"zero", "0", INT_LIT, "0"},
+		{"multi-digit", "12345", INT_LIT, "12345"},
+		{"float", "3.14", FLOAT_LIT, "3.14"},
+		{"float leading zero", "0.5", FLOAT_LIT, "0.5"},
+		{"float trailing digits", "1.000", FLOAT_LIT, "1.000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// arrange
+			l := New(tt.input, "test.assay")
 
-	// act
-	tok := l.NextToken()
+			// act
+			tok := l.NextToken()
 
-	// assert
-	require.Equal(t, INT_LIT, tok.Kind)
-	require.Equal(t, "42", tok.Literal)
+			// assert
+			require.Equal(t, tt.kind, tok.Kind)
+			require.Equal(t, tt.literal, tok.Literal)
+		})
+	}
+}
+
+func TestNextTokenNumberDotDisambiguation(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []struct {
+			kind    TokenKind
+			literal string
+		}
+	}{
+		{
+			"int then dotdot",
+			"42..100",
+			[]struct {
+				kind    TokenKind
+				literal string
+			}{
+				{INT_LIT, "42"},
+				{DOTDOT, ".."},
+				{INT_LIT, "100"},
+			},
+		},
+		{
+			"int then dot",
+			"42.foo",
+			[]struct {
+				kind    TokenKind
+				literal string
+			}{
+				{INT_LIT, "42"},
+				{DOT, "."},
+				{IDENT, "foo"},
+			},
+		},
+		{
+			"float",
+			"42.0",
+			[]struct {
+				kind    TokenKind
+				literal string
+			}{
+				{FLOAT_LIT, "42.0"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// arrange
+			l := New(tt.input, "test.assay")
+
+			for _, exp := range tt.expected {
+				// act
+				tok := l.NextToken()
+
+				// assert
+				require.Equal(t, exp.kind, tok.Kind)
+				require.Equal(t, exp.literal, tok.Literal)
+			}
+		})
+	}
 }
 
 func TestNextTokenOperatorsAndDelimiters(t *testing.T) {
 	// arrange
-	input := "== != < <= > >= + - * / = .. -> ( ) { } [ ] , : ."
+	input := "== != < <= > >= + - * / % = .. -> ( ) { } [ ] , : ."
 	expected := []struct {
 		kind    TokenKind
 		literal string
 	}{
 		{EQ, "=="}, {NEQ, "!="}, {LT, "<"}, {LTE, "<="}, {GT, ">"}, {GTE, ">="},
-		{PLUS, "+"}, {MINUS, "-"}, {STAR, "*"}, {SLASH, "/"}, {ASSIGN, "="},
+		{PLUS, "+"}, {MINUS, "-"}, {STAR, "*"}, {SLASH, "/"}, {PERCENT, "%"}, {ASSIGN, "="},
 		{DOTDOT, ".."}, {ARROW, "->"},
 		{LPAREN, "("}, {RPAREN, ")"}, {LBRACE, "{"}, {RBRACE, "}"},
 		{LBRACKET, "["}, {RBRACKET, "]"}, {COMMA, ","}, {COLON, ":"}, {DOT, "."},

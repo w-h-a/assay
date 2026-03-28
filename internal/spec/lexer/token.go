@@ -20,6 +20,7 @@ const (
 	// Identifiers and literals
 	IDENT
 	INT_LIT
+	FLOAT_LIT
 	STRING_LIT
 
 	// Keywords — spec language
@@ -61,19 +62,20 @@ const (
 	OPTION
 
 	// Operators
-	EQ     // ==
-	NEQ    // !=
-	LT     // <
-	LTE    // <=
-	GT     // >
-	GTE    // >=
-	PLUS   // +
-	MINUS  // -
-	STAR   // *
-	SLASH  // /
-	ASSIGN // =
-	DOTDOT // ..
-	ARROW  // ->
+	EQ      // ==
+	NEQ     // !=
+	LT      // <
+	LTE     // <=
+	GT      // >
+	GTE     // >=
+	PLUS    // +
+	MINUS   // -
+	STAR    // *
+	SLASH   // /
+	PERCENT // %
+	ASSIGN  // =
+	DOTDOT  // ..
+	ARROW   // ->
 
 	// Delimiters
 	LPAREN     // (
@@ -93,6 +95,7 @@ var kindNames = [...]string{
 	EOF:        "EOF",
 	IDENT:      "IDENT",
 	INT_LIT:    "INT_LIT",
+	FLOAT_LIT:  "FLOAT_LIT",
 	STRING_LIT: "STRING_LIT",
 	SPEC:       "spec",
 	TYPE:       "type",
@@ -136,6 +139,7 @@ var kindNames = [...]string{
 	MINUS:      "-",
 	STAR:       "*",
 	SLASH:      "/",
+	PERCENT:    "%",
 	ASSIGN:     "=",
 	DOTDOT:     "..",
 	ARROW:      "->",

@@ -54,6 +54,8 @@ func (l *Lexer) NextToken() Token {
 		return Token{Kind: STAR, Literal: "*", Pos: pos}
 	case '/':
 		return Token{Kind: SLASH, Literal: "/", Pos: pos}
+	case '%':
+		return Token{Kind: PERCENT, Literal: "%", Pos: pos}
 	case '=':
 		if l.peek() == '=' {
 			l.advance()
@@ -102,7 +104,7 @@ func (l *Lexer) NextToken() Token {
 			return l.scanIdentifier(pos)
 		}
 		if isDigit(ch) {
-			return l.scanInteger(pos)
+			return l.scanNumber(pos)
 		}
 		return Token{Kind: ILLEGAL, Literal: string(ch), Pos: pos}
 	}
@@ -129,12 +131,19 @@ func (l *Lexer) scanIdentifier(pos Position) Token {
 	return Token{Kind: LookupKeyword(literal), Literal: literal, Pos: pos}
 }
 
-// scanInteger reads the rest of an integer literal.
+// scanNumber reads the rest of an integer or float literal.
 // The first digit has already been consumed.
-func (l *Lexer) scanInteger(pos Position) Token {
+func (l *Lexer) scanNumber(pos Position) Token {
 	start := l.pos - 1
 	for isDigit(l.peek()) {
 		l.advance()
+	}
+	if l.peek() == '.' && l.pos < len(l.source)-1 && isDigit(l.source[l.pos+1]) {
+		l.advance() // consume '.'
+		for isDigit(l.peek()) {
+			l.advance()
+		}
+		return Token{Kind: FLOAT_LIT, Literal: l.source[start:l.pos], Pos: pos}
 	}
 	return Token{Kind: INT_LIT, Literal: l.source[start:l.pos], Pos: pos}
 }
