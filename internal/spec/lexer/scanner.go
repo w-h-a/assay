@@ -19,6 +19,95 @@ func New(source, file string) *Lexer {
 	}
 }
 
+// NextToken scans and returns the next token from the source.
+func (l *Lexer) NextToken() Token {
+	l.skipWhitespace()
+
+	pos := l.Position()
+
+	if l.isAtEnd() {
+		return Token{Kind: EOF, Literal: "", Pos: pos}
+	}
+
+	ch := l.advance()
+
+	switch ch {
+	case '(':
+		return Token{Kind: LPAREN, Literal: "(", Pos: pos}
+	case ')':
+		return Token{Kind: RPAREN, Literal: ")", Pos: pos}
+	case '{':
+		return Token{Kind: LBRACE, Literal: "{", Pos: pos}
+	case '}':
+		return Token{Kind: RBRACE, Literal: "}", Pos: pos}
+	case '[':
+		return Token{Kind: LBRACKET, Literal: "[", Pos: pos}
+	case ']':
+		return Token{Kind: RBRACKET, Literal: "]", Pos: pos}
+	case ',':
+		return Token{Kind: COMMA, Literal: ",", Pos: pos}
+	case ':':
+		return Token{Kind: COLON, Literal: ":", Pos: pos}
+	case '+':
+		return Token{Kind: PLUS, Literal: "+", Pos: pos}
+	case '*':
+		return Token{Kind: STAR, Literal: "*", Pos: pos}
+	case '/':
+		return Token{Kind: SLASH, Literal: "/", Pos: pos}
+	case '=':
+		if l.peek() == '=' {
+			l.advance()
+			return Token{Kind: EQ, Literal: "==", Pos: pos}
+		}
+		return Token{Kind: ASSIGN, Literal: "=", Pos: pos}
+	case '!':
+		if l.peek() == '=' {
+			l.advance()
+			return Token{Kind: NEQ, Literal: "!=", Pos: pos}
+		}
+		return Token{Kind: ILLEGAL, Literal: "!", Pos: pos}
+	case '<':
+		if l.peek() == '=' {
+			l.advance()
+			return Token{Kind: LTE, Literal: "<=", Pos: pos}
+		}
+		return Token{Kind: LT, Literal: "<", Pos: pos}
+	case '>':
+		if l.peek() == '=' {
+			l.advance()
+			return Token{Kind: GTE, Literal: ">=", Pos: pos}
+		}
+		return Token{Kind: GT, Literal: ">", Pos: pos}
+	case '-':
+		if l.peek() == '>' {
+			l.advance()
+			return Token{Kind: ARROW, Literal: "->", Pos: pos}
+		}
+		return Token{Kind: MINUS, Literal: "-", Pos: pos}
+	case '.':
+		if l.peek() == '.' {
+			l.advance()
+			return Token{Kind: DOTDOT, Literal: "..", Pos: pos}
+		}
+		return Token{Kind: DOT, Literal: ".", Pos: pos}
+	case '_':
+		if isAlphanumeric(l.peek()) {
+			return l.scanIdentifier(pos)
+		}
+		return Token{Kind: UNDERSCORE, Literal: "_", Pos: pos}
+	case '"':
+		return l.scanString(pos)
+	default:
+		if isLetter(ch) {
+			return l.scanIdentifier(pos)
+		}
+		if isDigit(ch) {
+			return l.scanInteger(pos)
+		}
+		return Token{Kind: ILLEGAL, Literal: string(ch), Pos: pos}
+	}
+}
+
 // Position returns the current source position (the location of the
 // next character to be consumed).
 func (l *Lexer) Position() Position {
@@ -27,6 +116,63 @@ func (l *Lexer) Position() Position {
 		Line:   l.line,
 		Column: l.column,
 	}
+}
+
+// scanIdentifier reads the rest of an identifier or keyword.
+// The first character (letter or underscore) has already been consumed.
+func (l *Lexer) scanIdentifier(pos Position) Token {
+	start := l.pos - 1
+	for isAlphanumeric(l.peek()) {
+		l.advance()
+	}
+	literal := l.source[start:l.pos]
+	return Token{Kind: LookupKeyword(literal), Literal: literal, Pos: pos}
+}
+
+// scanInteger reads the rest of an integer literal.
+// The first digit has already been consumed.
+func (l *Lexer) scanInteger(pos Position) Token {
+	start := l.pos - 1
+	for isDigit(l.peek()) {
+		l.advance()
+	}
+	return Token{Kind: INT_LIT, Literal: l.source[start:l.pos], Pos: pos}
+}
+
+// scanString reads a double-quoted string literal.
+// The opening quote has already been consumed.
+func (l *Lexer) scanString(pos Position) Token {
+	start := l.pos - 1
+	var buf []byte
+	for !l.isAtEnd() {
+		ch := l.advance()
+		switch ch {
+		case '"': // end quote case
+			return Token{Kind: STRING_LIT, Literal: string(buf), Pos: pos}
+		case '\\': // single backslash case
+			if l.isAtEnd() {
+				return Token{Kind: ILLEGAL, Literal: l.source[start:l.pos], Pos: pos}
+			}
+			esc := l.advance()
+			switch esc {
+			case 'n':
+				buf = append(buf, '\n')
+			case 't':
+				buf = append(buf, '\t')
+			case '"':
+				buf = append(buf, '"')
+			case '\\':
+				buf = append(buf, '\\')
+			default:
+				return Token{Kind: ILLEGAL, Literal: l.source[start:l.pos], Pos: pos}
+			}
+		case '\n': // illegal new line case
+			return Token{Kind: ILLEGAL, Literal: l.source[start : l.pos-1], Pos: pos}
+		default:
+			buf = append(buf, ch)
+		}
+	}
+	return Token{Kind: ILLEGAL, Literal: l.source[start:l.pos], Pos: pos}
 }
 
 // peek returns the current character without consuming it.
@@ -53,15 +199,6 @@ func (l *Lexer) advance() byte {
 		l.column++
 	}
 	return ch
-}
-
-// current returns the most recently consumed character.
-// Returns 0 if no characters have been consumed.
-func (l *Lexer) current() byte {
-	if l.pos == 0 {
-		return 0
-	}
-	return l.source[l.pos-1]
 }
 
 // skipWhitespace advances past spaces, tabs, carriage returns, and newlines.
