@@ -19,6 +19,20 @@ func New(source, file string) *Lexer {
 	}
 }
 
+// Lex tokenizes the complete source text and returns the token stream.
+// The final token is always EOF.
+func Lex(source, file string) []Token {
+	l := New(source, file)
+	var tokens []Token
+	for {
+		tok := l.NextToken()
+		tokens = append(tokens, tok)
+		if tok.Kind == EOF {
+			return tokens
+		}
+	}
+}
+
 // NextToken scans and returns the next token from the source.
 func (l *Lexer) NextToken() Token {
 	l.skipWhitespace()
@@ -210,15 +224,30 @@ func (l *Lexer) advance() byte {
 	return ch
 }
 
-// skipWhitespace advances past spaces, tabs, carriage returns, and newlines.
+// skipWhitespace advances past spaces, tabs, carriage returns, newlines,
+// and line comments (// to end of line)
 func (l *Lexer) skipWhitespace() {
 	for !l.isAtEnd() {
 		switch l.peek() {
 		case ' ', '\t', '\r', '\n':
 			l.advance()
+		case '/':
+			if l.pos+1 < len(l.source) && l.source[l.pos+1] == '/' {
+				l.skipComment()
+			} else {
+				return
+			}
 		default:
 			return
 		}
+	}
+}
+
+// skipComment advances past a line comment (// through end of line).
+// The trailing newline is not consumed; skipWhitespace handles it.
+func (l *Lexer) skipComment() {
+	for !l.isAtEnd() && l.peek() != '\n' {
+		l.advance()
 	}
 }
 
