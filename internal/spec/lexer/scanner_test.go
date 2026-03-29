@@ -382,6 +382,454 @@ func TestNextTokenIllegalCharacter(t *testing.T) {
 	require.Equal(t, 1, tok.Pos.Column)
 }
 
+func TestLexComments(t *testing.T) {
+	// arrange
+	tests := []struct {
+		name     string
+		input    string
+		expected []struct {
+			kind    TokenKind
+			literal string
+		}
+	}{
+		{
+			"line comment skipped",
+			"// this is a comment\nfoo",
+			[]struct {
+				kind    TokenKind
+				literal string
+			}{
+				{IDENT, "foo"},
+				{EOF, ""},
+			},
+		},
+		{
+			"inline comment",
+			"foo // comment\nbar",
+			[]struct {
+				kind    TokenKind
+				literal string
+			}{
+				{IDENT, "foo"},
+				{IDENT, "bar"},
+				{EOF, ""},
+			},
+		},
+		{
+			"comment at eof",
+			"foo // end",
+			[]struct {
+				kind    TokenKind
+				literal string
+			}{
+				{IDENT, "foo"},
+				{EOF, ""},
+			},
+		},
+		{
+			"consecutive comments",
+			"// first\n// second\nfoo",
+			[]struct {
+				kind    TokenKind
+				literal string
+			}{
+				{IDENT, "foo"},
+				{EOF, ""},
+			},
+		},
+		{
+			"slash not followed by slash",
+			"a / b",
+			[]struct {
+				kind    TokenKind
+				literal string
+			}{
+				{IDENT, "a"},
+				{SLASH, "/"},
+				{IDENT, "b"},
+				{EOF, ""},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// act
+			tokens := Lex(tt.input, "test.assay")
+
+			// assert
+			require.Len(t, tokens, len(tt.expected))
+			for i, exp := range tt.expected {
+				require.Equal(t, exp.kind, tokens[i].Kind, "token %d kind", i)
+				require.Equal(t, exp.literal, tokens[i].Literal, "token %d literal", i)
+			}
+		})
+	}
+}
+
+func TestLexContinuesAfterIllegal(t *testing.T) {
+	// act
+	tokens := Lex("@foo", "test.assay")
+
+	// assert
+	require.Len(t, tokens, 3)
+
+	require.Equal(t, ILLEGAL, tokens[0].Kind)
+	require.Equal(t, "@", tokens[0].Literal)
+	require.Equal(t, 1, tokens[0].Pos.Line)
+	require.Equal(t, 1, tokens[0].Pos.Column)
+
+	require.Equal(t, IDENT, tokens[1].Kind)
+	require.Equal(t, "foo", tokens[1].Literal)
+	require.Equal(t, 1, tokens[1].Pos.Line)
+	require.Equal(t, 2, tokens[1].Pos.Column)
+
+	require.Equal(t, EOF, tokens[2].Kind)
+}
+
+func TestLexMathSpec(t *testing.T) {
+	// arrange
+	input := `spec "math" {
+    func add(a: int, b: int) -> int
+
+    property commutative
+      forall(a: int, b: int)
+    {
+      add(a, b) == add(b, a)
+    }
+
+    property identity
+      forall(a: int)
+    {
+      add(a, 0) == a
+    }
+  }`
+	expected := []struct {
+		kind    TokenKind
+		literal string
+	}{
+		{SPEC, "spec"},
+		{STRING_LIT, "math"},
+		{LBRACE, "{"},
+		{FUNC, "func"},
+		{IDENT, "add"},
+		{LPAREN, "("},
+		{IDENT, "a"},
+		{COLON, ":"},
+		{INT, "int"},
+		{COMMA, ","},
+		{IDENT, "b"},
+		{COLON, ":"},
+		{INT, "int"},
+		{RPAREN, ")"},
+		{ARROW, "->"},
+		{INT, "int"},
+		{PROPERTY, "property"},
+		{IDENT, "commutative"},
+		{FORALL, "forall"},
+		{LPAREN, "("},
+		{IDENT, "a"},
+		{COLON, ":"},
+		{INT, "int"},
+		{COMMA, ","},
+		{IDENT, "b"},
+		{COLON, ":"},
+		{INT, "int"},
+		{RPAREN, ")"},
+		{LBRACE, "{"},
+		{IDENT, "add"},
+		{LPAREN, "("},
+		{IDENT, "a"},
+		{COMMA, ","},
+		{IDENT, "b"},
+		{RPAREN, ")"},
+		{EQ, "=="},
+		{IDENT, "add"},
+		{LPAREN, "("},
+		{IDENT, "b"},
+		{COMMA, ","},
+		{IDENT, "a"},
+		{RPAREN, ")"},
+		{RBRACE, "}"},
+		{PROPERTY, "property"},
+		{IDENT, "identity"},
+		{FORALL, "forall"},
+		{LPAREN, "("},
+		{IDENT, "a"},
+		{COLON, ":"},
+		{INT, "int"},
+		{RPAREN, ")"},
+		{LBRACE, "{"},
+		{IDENT, "add"},
+		{LPAREN, "("},
+		{IDENT, "a"},
+		{COMMA, ","},
+		{INT_LIT, "0"},
+		{RPAREN, ")"},
+		{EQ, "=="},
+		{IDENT, "a"},
+		{RBRACE, "}"},
+		{RBRACE, "}"},
+		{EOF, ""},
+	}
+
+	// act
+	tokens := Lex(input, "test.assay")
+
+	// assert
+	require.Len(t, tokens, len(expected))
+	for i, exp := range expected {
+		require.Equal(t, exp.kind, tokens[i].Kind, "token %d: expected %s, got %s", i, exp.kind, tokens[i].Kind)
+		require.Equal(t, exp.literal, tokens[i].Literal, "token %d literal", i)
+	}
+}
+
+func TestLexLogSpec(t *testing.T) {
+	// arrange
+	input := `spec "log" {
+    type Log
+    func new_log() -> Log
+    func append(log: Log, value: bytes) -> (uint, error)
+    func read(log: Log, offset: uint) -> (bytes, error)
+
+    predicate non_empty(v: bytes) {
+      len(v) > 0
+    }
+
+    property read_after_write
+      forall(value: bytes)
+      where non_empty(value)
+    {
+      let log = new_log()
+      let (offset, err) = append(log, value)
+      require err is ok
+      let (result, err2) = read(log, offset)
+      require err2 is ok
+      result == value
+    }
+
+    property append_monotonic
+      forall(a: bytes, b: bytes)
+      where non_empty(a) and non_empty(b)
+    {
+      let log = new_log()
+      let (off_a, _) = append(log, a)
+      let (off_b, _) = append(log, b)
+      off_b > off_a
+    }
+  }`
+	expected := []struct {
+		kind    TokenKind
+		literal string
+	}{
+		{SPEC, "spec"},
+		{STRING_LIT, "log"},
+		{LBRACE, "{"},
+		// type Log
+		{TYPE, "type"},
+		{IDENT, "Log"},
+		// func new_log() -> Log
+		{FUNC, "func"},
+		{IDENT, "new_log"},
+		{LPAREN, "("},
+		{RPAREN, ")"},
+		{ARROW, "->"},
+		{IDENT, "Log"},
+		// func append(log: Log, value: bytes) -> (uint, error)
+		{FUNC, "func"},
+		{IDENT, "append"},
+		{LPAREN, "("},
+		{IDENT, "log"},
+		{COLON, ":"},
+		{IDENT, "Log"},
+		{COMMA, ","},
+		{IDENT, "value"},
+		{COLON, ":"},
+		{BYTES, "bytes"},
+		{RPAREN, ")"},
+		{ARROW, "->"},
+		{LPAREN, "("},
+		{UINT, "uint"},
+		{COMMA, ","},
+		{ERROR, "error"},
+		{RPAREN, ")"},
+		// func read(log: Log, offset: uint) -> (bytes, error)
+		{FUNC, "func"},
+		{IDENT, "read"},
+		{LPAREN, "("},
+		{IDENT, "log"},
+		{COLON, ":"},
+		{IDENT, "Log"},
+		{COMMA, ","},
+		{IDENT, "offset"},
+		{COLON, ":"},
+		{UINT, "uint"},
+		{RPAREN, ")"},
+		{ARROW, "->"},
+		{LPAREN, "("},
+		{BYTES, "bytes"},
+		{COMMA, ","},
+		{ERROR, "error"},
+		{RPAREN, ")"},
+		// predicate non_empty(v: bytes) { len(v) > 0 }
+		{PREDICATE, "predicate"},
+		{IDENT, "non_empty"},
+		{LPAREN, "("},
+		{IDENT, "v"},
+		{COLON, ":"},
+		{BYTES, "bytes"},
+		{RPAREN, ")"},
+		{LBRACE, "{"},
+		{IDENT, "len"},
+		{LPAREN, "("},
+		{IDENT, "v"},
+		{RPAREN, ")"},
+		{GT, ">"},
+		{INT_LIT, "0"},
+		{RBRACE, "}"},
+		// property read_after_write forall(value: bytes) where non_empty(value) {
+		{PROPERTY, "property"},
+		{IDENT, "read_after_write"},
+		{FORALL, "forall"},
+		{LPAREN, "("},
+		{IDENT, "value"},
+		{COLON, ":"},
+		{BYTES, "bytes"},
+		{RPAREN, ")"},
+		{WHERE, "where"},
+		{IDENT, "non_empty"},
+		{LPAREN, "("},
+		{IDENT, "value"},
+		{RPAREN, ")"},
+		{LBRACE, "{"},
+		// let log = new_log()
+		{LET, "let"},
+		{IDENT, "log"},
+		{ASSIGN, "="},
+		{IDENT, "new_log"},
+		{LPAREN, "("},
+		{RPAREN, ")"},
+		// let (offset, err) = append(log, value)
+		{LET, "let"},
+		{LPAREN, "("},
+		{IDENT, "offset"},
+		{COMMA, ","},
+		{IDENT, "err"},
+		{RPAREN, ")"},
+		{ASSIGN, "="},
+		{IDENT, "append"},
+		{LPAREN, "("},
+		{IDENT, "log"},
+		{COMMA, ","},
+		{IDENT, "value"},
+		{RPAREN, ")"},
+		// require err is ok
+		{REQUIRE, "require"},
+		{IDENT, "err"},
+		{IS, "is"},
+		{OK, "ok"},
+		// let (result, err2) = read(log, offset)
+		{LET, "let"},
+		{LPAREN, "("},
+		{IDENT, "result"},
+		{COMMA, ","},
+		{IDENT, "err2"},
+		{RPAREN, ")"},
+		{ASSIGN, "="},
+		{IDENT, "read"},
+		{LPAREN, "("},
+		{IDENT, "log"},
+		{COMMA, ","},
+		{IDENT, "offset"},
+		{RPAREN, ")"},
+		// require err2 is ok
+		{REQUIRE, "require"},
+		{IDENT, "err2"},
+		{IS, "is"},
+		{OK, "ok"},
+		// result == value
+		{IDENT, "result"},
+		{EQ, "=="},
+		{IDENT, "value"},
+		{RBRACE, "}"},
+		// property append_monotonic forall(a: bytes, b: bytes) where non_empty(a) and non_empty(b) {
+		{PROPERTY, "property"},
+		{IDENT, "append_monotonic"},
+		{FORALL, "forall"},
+		{LPAREN, "("},
+		{IDENT, "a"},
+		{COLON, ":"},
+		{BYTES, "bytes"},
+		{COMMA, ","},
+		{IDENT, "b"},
+		{COLON, ":"},
+		{BYTES, "bytes"},
+		{RPAREN, ")"},
+		{WHERE, "where"},
+		{IDENT, "non_empty"},
+		{LPAREN, "("},
+		{IDENT, "a"},
+		{RPAREN, ")"},
+		{AND, "and"},
+		{IDENT, "non_empty"},
+		{LPAREN, "("},
+		{IDENT, "b"},
+		{RPAREN, ")"},
+		{LBRACE, "{"},
+		// let log = new_log()
+		{LET, "let"},
+		{IDENT, "log"},
+		{ASSIGN, "="},
+		{IDENT, "new_log"},
+		{LPAREN, "("},
+		{RPAREN, ")"},
+		// let (off_a, _) = append(log, a)
+		{LET, "let"},
+		{LPAREN, "("},
+		{IDENT, "off_a"},
+		{COMMA, ","},
+		{UNDERSCORE, "_"},
+		{RPAREN, ")"},
+		{ASSIGN, "="},
+		{IDENT, "append"},
+		{LPAREN, "("},
+		{IDENT, "log"},
+		{COMMA, ","},
+		{IDENT, "a"},
+		{RPAREN, ")"},
+		// let (off_b, _) = append(log, b)
+		{LET, "let"},
+		{LPAREN, "("},
+		{IDENT, "off_b"},
+		{COMMA, ","},
+		{UNDERSCORE, "_"},
+		{RPAREN, ")"},
+		{ASSIGN, "="},
+		{IDENT, "append"},
+		{LPAREN, "("},
+		{IDENT, "log"},
+		{COMMA, ","},
+		{IDENT, "b"},
+		{RPAREN, ")"},
+		// off_b > off_a
+		{IDENT, "off_b"},
+		{GT, ">"},
+		{IDENT, "off_a"},
+		{RBRACE, "}"},
+		{RBRACE, "}"},
+		{EOF, ""},
+	}
+
+	// act
+	tokens := Lex(input, "test.assay")
+
+	// assert
+	require.Len(t, tokens, len(expected))
+	for i, exp := range expected {
+		require.Equal(t, exp.kind, tokens[i].Kind, "token %d: expected %s, got %s", i, exp.kind, tokens[i].Kind)
+		require.Equal(t, exp.literal, tokens[i].Literal, "token %d literal", i)
+	}
+}
+
 func TestPositionString(t *testing.T) {
 	tests := []struct {
 		pos  Position
