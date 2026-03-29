@@ -10,54 +10,56 @@ LLMs are collapsing the cost of generating proofs and implementations. When proo
 
 ## Solution
 
-Assay is a standalone specification language for software behavior with pluggable verification backends. The spec language is the domain. Verification backends are infrastructure. Same spec, different guarantee levels; from probabilistic (property testing) to mathematical (formal proof).
+Assay is a standalone specification language for software behavior with pluggable verification backends. The spec language is the domain. Verification backends are plug and play. Same spec, different guarantee levels; from probabilistic (property testing) to mathematical (formal proof).
 
-Assay separates three concerns:
-
-1. **Specification** — what should this system do? (`.assay` file)
-2. **Binding** — how does the spec connect to an implementation? (`.bind` file)
-3. **Verification** — does the implementation satisfy the spec? (backend)
+ |                       | property testing                  | formal proof                                       |
+ | --------------------- | --------------------------------- | -------------------------------------------------- |
+ | **Backend generates** | e.g., go test file + test results | e.g., dafny scaffolding + theorems + proof results |
+ | **Trust gap**         | none                              | model ↔ code                                       |
+ | **Guarantee**         | probabilistic                     | mathematical (of model)                            |
 
 ## Architecture
 
 ```mermaid
-graph TD
+graph TD     
+    subgraph "Handler Layer"
+        CLI["cmd/assay (CLI)"]
+    end
+
+    CLI -->|1| SVC
+
+    subgraph "Service Layer"
+        SVC((Service))
+    end
+
+    SVC -->|2 parse spec| L
+    SVC -->|3 parse binding| BP
+
     subgraph "Domain Layer"
         L[Lexer] --> P[Parser]
         P --> AST
         AST --> TC[Type Checker]
+        TC --> VA[Validated AST]
+        BP[Binding Parser] --> BA[Binding AST]
     end
 
-    subgraph "Input"
-        SF[".assay spec"] --> L
-        BF[".bind file"] --> BP[Binding Parser]
+    VA -->|4| SVC
+    BA -->|4| SVC
+
+    SVC -->|5 resolve| R
+    SVC -->|6 verify| B
+    SVC -->|7 store| VS
+
+    subgraph "Client Layer"
+        R[Resolver]
+        B[Backend]
+        VS[Verdict Store]
     end
 
-    TC --> VA[Validated AST]
-    BP --> BR[Binding Resolver]
-    BR --> VA
-
-    VA --> B{Backend}
-    B --> CG[Go Code Generator]
-    B --> DC[Dafny Compiler]
-    B --> LC[Lean Compiler]
-
-    subgraph "Property Testing"
-        CG --> TF["_assay_test.go"]
-        TF --> GT["go test + rapid"]
-    end
-
-    subgraph "Dafny"
-        DC --> DF[".dfy file"]
-    end
-
-    subgraph "Lean"
-        LC --> LF[".lean file"]
-    end
-
-    GT --> V[Verdict]
-    DF --> V
-    LF --> V
+    R -.-> GP["gopackage (go/types)"]
+    B -.-> PT[Property Testing]
+    B -.-> FP[Formal Proof]
+    VS -.-> FS["fs (~/.assay/verdicts/)"]
 ```
 
 ## Usage
