@@ -1,13 +1,10 @@
-.PHONY: tidy style lint test unit-test build
+.PHONY: tidy style test unit-test build
 
 tidy:
 	go mod tidy
 
 style:
 	goimports -l -w ./
-
-lint:
-	staticcheck ./...
 
 test:
 	@echo "=== TESTS ==="
