@@ -243,7 +243,9 @@ func (p *parser) parseTypeExpr() ast.TypeExpr {
 	tok := p.peek()
 	if !isTypeName(tok.Kind) {
 		p.addError(tok, "expected type, got %s", tok.Kind)
-		p.advance()
+		if !p.at(lexer.RPAREN) && !p.at(lexer.RBRACE) && !p.at(lexer.RBRACKET) && !p.at(lexer.COMMA) {
+			p.advance()
+		}
 		return ast.TypeExpr{Pos: astPos(tok)}
 	}
 	p.advance() // consume type name
@@ -287,6 +289,76 @@ func (p *parser) parseTupleType() ast.TypeExpr {
 	p.expect(lexer.RPAREN)
 
 	return te
+}
+
+// parseExpr parses an expression using precedence climbing.
+// minPrec is the minimum precedence for binary operators to bind.
+// Recursing with prec+1 raises the bar so the inner call rejects
+// operators at the same level, forcing them back to the outer call.
+// This makes same-precedence operators left-associative.
+func (p *parser) parseExpr(minPrec precedence) ast.Expr {
+	left := p.parseAtom()
+
+	for {
+		prec := binaryPrec(p.peek().Kind)
+		if prec == precNone || prec < minPrec {
+			break
+		}
+		tok := p.advance() // consume operator
+		right := p.parseExpr(prec + 1)
+		left = &ast.BinaryExpr{
+			Left:  left,
+			Op:    tok.Literal,
+			Right: right,
+			Pos:   astPos(tok),
+		}
+	}
+
+	return left
+}
+
+// parseAtom parses an atomic expression: literal, identifiers, or
+// parenthesized expression. Unary prefix operators (-, not) are
+// handled here as well.
+func (p *parser) parseAtom() ast.Expr {
+	tok := p.peek()
+
+	switch tok.Kind {
+	case lexer.MINUS, lexer.NOT:
+		p.advance() // consume operator
+		operand := p.parseAtom()
+		return &ast.UnaryExpr{
+			Op:      tok.Literal,
+			Operand: operand,
+			Pos:     astPos(tok),
+		}
+	case lexer.INT_LIT:
+		p.advance()
+		return &ast.LiteralExpr{Value: tok.Literal, Kind: ast.LiteralInt, Pos: astPos(tok)}
+	case lexer.FLOAT_LIT:
+		p.advance()
+		return &ast.LiteralExpr{Value: tok.Literal, Kind: ast.LiteralFloat, Pos: astPos(tok)}
+	case lexer.STRING_LIT:
+		p.advance()
+		return &ast.LiteralExpr{Value: tok.Literal, Kind: ast.LiteralString, Pos: astPos(tok)}
+	case lexer.TRUE, lexer.FALSE:
+		p.advance()
+		return &ast.LiteralExpr{Value: tok.Literal, Kind: ast.LiteralBool, Pos: astPos(tok)}
+	case lexer.IDENT:
+		p.advance()
+		return &ast.IdentExpr{Name: tok.Literal, Pos: astPos(tok)}
+	case lexer.LPAREN:
+		p.advance()
+		expr := p.parseExpr(precOr)
+		p.expect(lexer.RPAREN)
+		return expr
+	default:
+		p.addError(tok, "expected expression, got %s", tok.Kind)
+		if !p.at(lexer.RPAREN) && !p.at(lexer.RBRACE) && !p.at(lexer.RBRACKET) && !p.at(lexer.COMMA) {
+			p.advance()
+		}
+		return &ast.IdentExpr{Pos: astPos(tok)}
+	}
 }
 
 // PRIVATE HELPERS
