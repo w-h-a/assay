@@ -75,6 +75,8 @@ func (p *parser) parseDecl() ast.Decl {
 	switch p.peek().Kind {
 	case lexer.TYPE:
 		return p.parseTypeDecl()
+	case lexer.FUNC:
+		return p.parseFuncDecl()
 	default:
 		tok := p.peek()
 		p.addError(tok, "expected declaration, got %s", tok.Kind)
@@ -150,6 +152,85 @@ func (p *parser) parseFieldDecl() ast.FieldDecl {
 	}
 }
 
+// parseFuncDecl parses a function declaration:
+//
+//	func name(param1: Type1, param2: Type2) -> ReturnType
+//	func name(params) -> (T1, T2)
+//	func name(params)
+func (p *parser) parseFuncDecl() *ast.FuncDecl {
+	start := p.advance() // consume FUNC
+
+	nameTok, ok := p.expect(lexer.IDENT)
+	if !ok {
+		return &ast.FuncDecl{Pos: astPos(start)}
+	}
+
+	if _, ok := p.expect(lexer.LPAREN); !ok {
+		return &ast.FuncDecl{Name: nameTok.Literal, Pos: astPos(start)}
+	}
+
+	var params []ast.Param
+	for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+		before := p.pos
+		param := p.parseParam()
+		if p.pos == before {
+			p.skipToParam()
+			continue
+		}
+		params = append(params, param)
+		if p.at(lexer.COMMA) {
+			p.advance() // consume COMMA
+		} else if !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+			p.addError(p.peek(), "expected comma between parameters")
+		}
+	}
+
+	p.expect(lexer.RPAREN)
+
+	decl := &ast.FuncDecl{
+		Name:   nameTok.Literal,
+		Params: params,
+		Pos:    astPos(start),
+	}
+
+	if !p.at(lexer.ARROW) {
+		return decl
+	}
+
+	p.advance() // consume ARROW
+
+	typ := p.parseTypeExpr()
+	if len(typ.Elements) > 0 {
+		decl.Returns = typ.Elements
+	} else {
+		decl.Returns = []ast.TypeExpr{typ}
+	}
+
+	return decl
+}
+
+// parseParam parses a named, typed parameter: name: Type
+func (p *parser) parseParam() ast.Param {
+	start := p.peek()
+
+	nameTok, ok := p.expect(lexer.IDENT)
+	if !ok {
+		return ast.Param{Pos: astPos(start)}
+	}
+
+	if _, ok := p.expect(lexer.COLON); !ok {
+		return ast.Param{Name: nameTok.Literal, Pos: astPos(nameTok)}
+	}
+
+	typ := p.parseTypeExpr()
+
+	return ast.Param{
+		Name: nameTok.Literal,
+		Type: typ,
+		Pos:  astPos(nameTok),
+	}
+}
+
 // parseTypeExpr parses a type expression. A leading paren starts a
 // tuple like (uint, error). Otherwise it expects a type name like int
 // or Log, optionally followed by type parameters in brackets like
@@ -215,7 +296,7 @@ func (p *parser) parseTupleType() ast.TypeExpr {
 func (p *parser) skipToDecl() {
 	for {
 		switch p.peek().Kind {
-		case lexer.TYPE, lexer.RBRACE, lexer.EOF:
+		case lexer.TYPE, lexer.FUNC, lexer.RBRACE, lexer.EOF:
 			return
 		}
 		p.advance()
@@ -228,6 +309,18 @@ func (p *parser) skipToField() {
 	for {
 		switch p.peek().Kind {
 		case lexer.COMMA, lexer.RBRACE, lexer.EOF:
+			return
+		}
+		p.advance()
+	}
+}
+
+// skipToParam advances past tokens until a comma, closing paren,
+// or EOF is found. Used for error recovery.
+func (p *parser) skipToParam() {
+	for {
+		switch p.peek().Kind {
+		case lexer.COMMA, lexer.RPAREN, lexer.EOF:
 			return
 		}
 		p.advance()

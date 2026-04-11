@@ -317,3 +317,171 @@ func TestParseTrailingCommaInTuple(t *testing.T) {
 	require.Equal(t, "uint", result.Elements[0].Name)
 	require.Equal(t, "error", result.Elements[1].Name)
 }
+
+func TestParseFuncSingleReturn(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func append(log: Log, data: bytes) -> uint
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+	require.Len(t, spec.Declarations, 1)
+
+	fd := spec.Declarations[0].(*ast.FuncDecl)
+	require.Equal(t, "append", fd.Name)
+	require.Len(t, fd.Params, 2)
+
+	require.Equal(t, "log", fd.Params[0].Name)
+	require.Equal(t, "Log", fd.Params[0].Type.Name)
+	require.Equal(t, "data", fd.Params[1].Name)
+	require.Equal(t, "bytes", fd.Params[1].Type.Name)
+
+	require.Len(t, fd.Returns, 1)
+	require.Equal(t, "uint", fd.Returns[0].Name)
+}
+
+func TestParseFuncTupleReturn(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func append(log: Log, data: bytes) -> (uint, error)
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	fd := spec.Declarations[0].(*ast.FuncDecl)
+	require.Equal(t, "append", fd.Name)
+	require.Len(t, fd.Params, 2)
+	require.Len(t, fd.Returns, 2)
+	require.Equal(t, "uint", fd.Returns[0].Name)
+	require.Equal(t, "error", fd.Returns[1].Name)
+}
+
+func TestParseFuncNoReturn(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func clear(log: Log)
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	fd := spec.Declarations[0].(*ast.FuncDecl)
+	require.Equal(t, "clear", fd.Name)
+	require.Len(t, fd.Params, 1)
+	require.Equal(t, "log", fd.Params[0].Name)
+	require.Equal(t, "Log", fd.Params[0].Type.Name)
+	require.Empty(t, fd.Returns)
+}
+
+func TestParseFuncParameterizedTypes(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func get(store: map[string, bytes], key: string) -> option[bytes]
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	fd := spec.Declarations[0].(*ast.FuncDecl)
+	require.Equal(t, "get", fd.Name)
+
+	require.Len(t, fd.Params, 2)
+	require.Equal(t, "store", fd.Params[0].Name)
+	require.Equal(t, "map", fd.Params[0].Type.Name)
+	require.Len(t, fd.Params[0].Type.Params, 2)
+	require.Equal(t, "string", fd.Params[0].Type.Params[0].Name)
+	require.Equal(t, "bytes", fd.Params[0].Type.Params[1].Name)
+
+	require.Equal(t, "key", fd.Params[1].Name)
+	require.Equal(t, "string", fd.Params[1].Type.Name)
+
+	require.Len(t, fd.Returns, 1)
+	require.Equal(t, "option", fd.Returns[0].Name)
+	require.Len(t, fd.Returns[0].Params, 1)
+	require.Equal(t, "bytes", fd.Returns[0].Params[0].Name)
+}
+
+func TestParseFuncNoParams(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func now() -> uint
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	fd := spec.Declarations[0].(*ast.FuncDecl)
+	require.Equal(t, "now", fd.Name)
+	require.Empty(t, fd.Params)
+	require.Len(t, fd.Returns, 1)
+	require.Equal(t, "uint", fd.Returns[0].Name)
+}
+
+func TestParseFuncErrorMissingName(t *testing.T) {
+	// arrange
+	source := `spec "test" { func (x: int) -> int }`
+
+	// act
+	_, errs := Parse(source, "test.assay")
+
+	// assert
+	require.NotEmpty(t, errs)
+}
+
+func TestParseFuncErrorMissingParen(t *testing.T) {
+	// arrange
+	source := `spec "test" { func append log: Log -> uint }`
+
+	// act
+	_, errs := Parse(source, "test.assay")
+
+	// assert
+	require.NotEmpty(t, errs)
+}
+
+func TestParseFuncErrorMalformedParam(t *testing.T) {
+	// arrange
+	source := `spec "test" { func append(123: int) -> uint }`
+
+	// act
+	_, errs := Parse(source, "test.assay")
+
+	// assert
+	require.NotEmpty(t, errs)
+}
+
+func TestParseFuncTrailingCommaInParams(t *testing.T) {
+	// arrange
+	source := `spec "test" {                                                                                                    
+                  func append(log: Log, data: bytes,) -> uint                                                                       
+          }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	fd := spec.Declarations[0].(*ast.FuncDecl)
+	require.Equal(t, "append", fd.Name)
+	require.Len(t, fd.Params, 2)
+	require.Equal(t, "log", fd.Params[0].Name)
+	require.Equal(t, "data", fd.Params[1].Name)
+}
