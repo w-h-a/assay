@@ -795,3 +795,267 @@ func TestParsePredicateLeadingCommaInParams(t *testing.T) {
 	// assert
 	require.NotEmpty(t, errs)
 }
+
+func TestParsePropertyContractualBareType(t *testing.T) {
+	// arrange — commutative property from 'math' spec
+	source := `spec "math" {
+                func add(a: int, b: int) -> int
+
+                property commutative forall(a: int, b: int) {
+                        add(a, b) == add(b, a)
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+	require.Len(t, spec.Declarations, 2)
+
+	pd := spec.Declarations[1].(*ast.PropertyDecl)
+	require.Equal(t, "commutative", pd.Name)
+	require.Equal(t, ast.Contractual, pd.Shape)
+
+	require.Len(t, pd.Forall.Vars, 2)
+	require.Equal(t, "a", pd.Forall.Vars[0].Name)
+	require.Equal(t, "int", pd.Forall.Vars[0].Type.Name)
+	require.Nil(t, pd.Forall.Vars[0].Generator)
+	require.Equal(t, "b", pd.Forall.Vars[1].Name)
+	require.Equal(t, "int", pd.Forall.Vars[1].Type.Name)
+	require.Nil(t, pd.Forall.Vars[1].Generator)
+
+	require.Len(t, pd.Body, 1)
+	assert := pd.Body[0].(*ast.AssertExpr)
+	eq := assert.Expr.(*ast.BinaryExpr)
+	require.Equal(t, "==", eq.Op)
+
+	lhs := eq.Left.(*ast.CallExpr)
+	require.Equal(t, "add", lhs.Func)
+	require.Len(t, lhs.Args, 2)
+	require.Equal(t, "a", lhs.Args[0].(*ast.IdentExpr).Name)
+	require.Equal(t, "b", lhs.Args[1].(*ast.IdentExpr).Name)
+
+	rhs := eq.Right.(*ast.CallExpr)
+	require.Equal(t, "add", rhs.Func)
+	require.Equal(t, "b", rhs.Args[0].(*ast.IdentExpr).Name)
+	require.Equal(t, "a", rhs.Args[1].(*ast.IdentExpr).Name)
+}
+
+func TestParsePropertyRangeGen(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func square(n: int) -> int
+
+                property square_non_negative forall(n: int in 1..100) {
+                        square(n) >= 0
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[1].(*ast.PropertyDecl)
+	require.Equal(t, "square_non_negative", pd.Name)
+	require.Len(t, pd.Forall.Vars, 1)
+
+	v := pd.Forall.Vars[0]
+	require.Equal(t, "n", v.Name)
+	require.Equal(t, "int", v.Type.Name)
+
+	rg := v.Generator.(*ast.RangeGen)
+	require.Equal(t, "1", rg.Lo.(*ast.LiteralExpr).Value)
+	require.Equal(t, "100", rg.Hi.(*ast.LiteralExpr).Value)
+}
+
+func TestParsePropertyBuiltinGen(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func length(s: string) -> int
+
+                property length_bounded forall(s: string in strings(1, 50)) {
+                        length(s) >= 1
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[1].(*ast.PropertyDecl)
+	require.Len(t, pd.Forall.Vars, 1)
+
+	v := pd.Forall.Vars[0]
+	require.Equal(t, "s", v.Name)
+	require.Equal(t, "string", v.Type.Name)
+
+	bg := v.Generator.(*ast.BuiltinGen)
+	require.Equal(t, "strings", bg.Name)
+	require.Len(t, bg.Args, 2)
+	require.Equal(t, "1", bg.Args[0].(*ast.LiteralExpr).Value)
+	require.Equal(t, "50", bg.Args[1].(*ast.LiteralExpr).Value)
+}
+
+func TestParsePropertyOneOfGen(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func classify(x: int) -> string
+
+                property classifies_known forall(x: int in one_of(1, 2, 3)) {
+                        classify(x) != "unknown"
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[1].(*ast.PropertyDecl)
+	require.Len(t, pd.Forall.Vars, 1)
+
+	v := pd.Forall.Vars[0]
+	require.Equal(t, "x", v.Name)
+
+	og := v.Generator.(*ast.OneOfGen)
+	require.Len(t, og.Values, 3)
+	require.Equal(t, "1", og.Values[0].(*ast.LiteralExpr).Value)
+	require.Equal(t, "2", og.Values[1].(*ast.LiteralExpr).Value)
+	require.Equal(t, "3", og.Values[2].(*ast.LiteralExpr).Value)
+}
+
+func TestParsePropertyMultipleForallVars(t *testing.T) {
+	// arrange — mixed generator forms
+	source := `spec "test" {
+                func concat(a: string, b: string) -> string
+
+                property concat_length forall(a: string in strings(0, 10), b: string in strings(0, 10)) {
+                        length(concat(a, b)) == length(a) + length(b)
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[1].(*ast.PropertyDecl)
+	require.Len(t, pd.Forall.Vars, 2)
+
+	require.Equal(t, "a", pd.Forall.Vars[0].Name)
+	bg0 := pd.Forall.Vars[0].Generator.(*ast.BuiltinGen)
+	require.Equal(t, "strings", bg0.Name)
+
+	require.Equal(t, "b", pd.Forall.Vars[1].Name)
+	bg1 := pd.Forall.Vars[1].Generator.(*ast.BuiltinGen)
+	require.Equal(t, "strings", bg1.Name)
+}
+
+func TestParsePropertySequential(t *testing.T) {
+	// arrange — sequential property with let and require
+	source := `spec "log" {
+                type Log
+                func append(log: Log, data: bytes) -> (uint, error)
+                func read(log: Log, offset: uint) -> (bytes, error)
+
+                property write_read forall(log: Log, data: bytes) {
+                        let (offset, err) = append(log, data)
+                        require err is ok
+                        let (result, err2) = read(log, offset)
+                        require err2 is ok
+                        result == data
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[3].(*ast.PropertyDecl)
+	require.Equal(t, "write_read", pd.Name)
+	require.Equal(t, ast.Sequential, pd.Shape)
+
+	require.Len(t, pd.Forall.Vars, 2)
+	require.Equal(t, "log", pd.Forall.Vars[0].Name)
+	require.Equal(t, "Log", pd.Forall.Vars[0].Type.Name)
+	require.Equal(t, "data", pd.Forall.Vars[1].Name)
+	require.Equal(t, "bytes", pd.Forall.Vars[1].Type.Name)
+
+	require.Len(t, pd.Body, 5)
+
+	let0 := pd.Body[0].(*ast.LetBinding)
+	require.Equal(t, []string{"offset", "err"}, let0.Names)
+	call0 := let0.Expr.(*ast.CallExpr)
+	require.Equal(t, "append", call0.Func)
+
+	req0 := pd.Body[1].(*ast.RequireStmt)
+	isExpr0 := req0.Expr.(*ast.IsExpr)
+	require.Equal(t, "err", isExpr0.Expr.(*ast.IdentExpr).Name)
+	require.Equal(t, ast.IsOk, isExpr0.Target)
+
+	let1 := pd.Body[2].(*ast.LetBinding)
+	require.Equal(t, []string{"result", "err2"}, let1.Names)
+
+	req1 := pd.Body[3].(*ast.RequireStmt)
+	isExpr1 := req1.Expr.(*ast.IsExpr)
+	require.Equal(t, ast.IsOk, isExpr1.Target)
+
+	assert := pd.Body[4].(*ast.AssertExpr)
+	eq := assert.Expr.(*ast.BinaryExpr)
+	require.Equal(t, "==", eq.Op)
+	require.Equal(t, "result", eq.Left.(*ast.IdentExpr).Name)
+	require.Equal(t, "data", eq.Right.(*ast.IdentExpr).Name)
+}
+
+func TestParsePropertyErrorMissingName(t *testing.T) {
+	// arrange
+	source := `spec "test" { property forall(x: int) { x > 0 } }`
+
+	// act
+	_, errs := Parse(source, "test.assay")
+
+	// assert
+	require.NotEmpty(t, errs)
+}
+
+func TestParsePropertyErrorMissingForall(t *testing.T) {
+	// arrange
+	source := `spec "test" { property p (x: int) { x > 0 } }`
+
+	// act
+	_, errs := Parse(source, "test.assay")
+
+	// assert
+	require.NotEmpty(t, errs)
+}
+
+func TestParsePropertyErrorMissingBrace(t *testing.T) {
+	// arrange
+	source := `spec "test" { property p forall(x: int) x > 0 }`
+
+	// act
+	_, errs := Parse(source, "test.assay")
+
+	// assert
+	require.NotEmpty(t, errs)
+}
+
+func TestParsePropertyErrorMalformedForallVar(t *testing.T) {
+	// arrange — leading comma in forall vars, parser must not hang
+	source := `spec "test" { property p forall(, x: int) { x > 0 } }`
+
+	// act
+	_, errs := Parse(source, "test.assay")
+
+	// assert
+	require.NotEmpty(t, errs)
+}

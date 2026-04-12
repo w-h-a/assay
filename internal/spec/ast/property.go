@@ -159,7 +159,7 @@ func (*AssertExpr) stmtNode() {}
 //
 //   - RangeGen:   n: int in 1..100
 //   - BuiltinGen: s: string in strings(1, 50)
-//   - OneOfGen:   x: int in {1, 2, 3}
+//   - OneOfGen:   x: int in one_of(1, 2, 3)
 type GeneratorConstraint interface {
 	genNode()
 }
