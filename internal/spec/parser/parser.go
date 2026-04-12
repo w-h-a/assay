@@ -77,6 +77,8 @@ func (p *parser) parseDecl() ast.Decl {
 		return p.parseTypeDecl()
 	case lexer.FUNC:
 		return p.parseFuncDecl()
+	case lexer.PREDICATE:
+		return p.parsePredicateDecl()
 	default:
 		tok := p.peek()
 		p.addError(tok, "expected declaration, got %s", tok.Kind)
@@ -114,6 +116,9 @@ func (p *parser) parseTypeDecl() *ast.TypeDecl {
 		field := p.parseFieldDecl()
 		if p.pos == before {
 			p.skipToField()
+			if p.at(lexer.COMMA) {
+				p.advance() // consume COMMA
+			}
 			continue
 		}
 		decl.Fields = append(decl.Fields, field)
@@ -175,6 +180,9 @@ func (p *parser) parseFuncDecl() *ast.FuncDecl {
 		param := p.parseParam()
 		if p.pos == before {
 			p.skipToParam()
+			if p.at(lexer.COMMA) {
+				p.advance() // consume COMMA
+			}
 			continue
 		}
 		params = append(params, param)
@@ -207,6 +215,61 @@ func (p *parser) parseFuncDecl() *ast.FuncDecl {
 	}
 
 	return decl
+}
+
+// parsePredicateDecl parses a predicate declaration:
+// predicate name(param1: Type1, param2: Type2) { expr }
+func (p *parser) parsePredicateDecl() *ast.PredicateDecl {
+	start := p.advance() // consume PREDICATE
+
+	nameTok, ok := p.expect(lexer.IDENT)
+	if !ok {
+		return &ast.PredicateDecl{Pos: astPos(start)}
+	}
+
+	if _, ok := p.expect(lexer.LPAREN); !ok {
+		return &ast.PredicateDecl{Name: nameTok.Literal, Pos: astPos(start)}
+	}
+
+	var params []ast.Param
+	for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+		before := p.pos
+		param := p.parseParam()
+		if p.pos == before {
+			p.skipToParam()
+			if p.at(lexer.COMMA) {
+				p.advance() // consume COMMA
+			}
+			continue
+		}
+		params = append(params, param)
+		if p.at(lexer.COMMA) {
+			p.advance() // consume COMMA
+		} else if !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+			p.addError(p.peek(), "expected comma between parameters")
+		}
+	}
+
+	p.expect(lexer.RPAREN)
+
+	if _, ok := p.expect(lexer.LBRACE); !ok {
+		return &ast.PredicateDecl{
+			Name:   nameTok.Literal,
+			Params: params,
+			Pos:    astPos(start),
+		}
+	}
+
+	body := p.parseExpr(precOr)
+
+	p.expect(lexer.RBRACE)
+
+	return &ast.PredicateDecl{
+		Name:   nameTok.Literal,
+		Params: params,
+		Body:   body,
+		Pos:    astPos(start),
+	}
 }
 
 // parseParam parses a named, typed parameter: name: Type
@@ -368,7 +431,7 @@ func (p *parser) parseAtom() ast.Expr {
 func (p *parser) skipToDecl() {
 	for {
 		switch p.peek().Kind {
-		case lexer.TYPE, lexer.FUNC, lexer.RBRACE, lexer.EOF:
+		case lexer.TYPE, lexer.FUNC, lexer.PREDICATE, lexer.RBRACE, lexer.EOF:
 			return
 		}
 		p.advance()
