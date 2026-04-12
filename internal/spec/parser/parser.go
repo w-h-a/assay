@@ -79,6 +79,8 @@ func (p *parser) parseDecl() ast.Decl {
 		return p.parseFuncDecl()
 	case lexer.PREDICATE:
 		return p.parsePredicateDecl()
+	case lexer.PROPERTY:
+		return p.parsePropertyDecl()
 	default:
 		tok := p.peek()
 		p.addError(tok, "expected declaration, got %s", tok.Kind)
@@ -294,6 +296,237 @@ func (p *parser) parseParam() ast.Param {
 	}
 }
 
+// parsePropertyDecl parses a property declaration:
+// property name forall(x: int, n: int in 1..100) { body }
+func (p *parser) parsePropertyDecl() *ast.PropertyDecl {
+	start := p.advance() // consume PROPERTY
+
+	nameTok, ok := p.expect(lexer.IDENT)
+	if !ok {
+		return &ast.PropertyDecl{Pos: astPos(start)}
+	}
+
+	if _, ok := p.expect(lexer.FORALL); !ok {
+		return &ast.PropertyDecl{Name: nameTok.Literal, Pos: astPos(start)}
+	}
+
+	forall := p.parseForallClause()
+
+	if _, ok := p.expect(lexer.LBRACE); !ok {
+		return &ast.PropertyDecl{
+			Name:   nameTok.Literal,
+			Forall: forall,
+			Pos:    astPos(start),
+		}
+	}
+
+	body := p.parsePropertyBody()
+
+	p.expect(lexer.RBRACE)
+
+	shape := ast.Contractual
+	for _, s := range body {
+		switch s.(type) {
+		case *ast.LetBinding, *ast.RequireStmt:
+			shape = ast.Sequential
+		}
+		if shape == ast.Sequential {
+			break
+		}
+	}
+
+	return &ast.PropertyDecl{
+		Name:   nameTok.Literal,
+		Forall: forall,
+		Body:   body,
+		Shape:  shape,
+	}
+}
+
+// parseForallClause parses the forall(var1, var2, ...) clause.
+func (p *parser) parseForallClause() ast.ForallClause {
+	start := p.peek()
+
+	if _, ok := p.expect(lexer.LPAREN); !ok {
+		return ast.ForallClause{Pos: astPos(start)}
+	}
+
+	var vars []ast.QuantifiedVar
+	for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+		before := p.pos
+		v := p.parseQuantifiedVar()
+		if p.pos == before {
+			p.skipToParam()
+			if p.at(lexer.COMMA) {
+				p.advance() // consume COMMA
+			}
+			continue
+		}
+		vars = append(vars, v)
+		if p.at(lexer.COMMA) {
+			p.advance() // consume COMMA
+		} else if !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+			p.addError(p.peek(), "expected comma between forall variables")
+		}
+	}
+
+	p.expect(lexer.RPAREN)
+
+	return ast.ForallClause{Vars: vars, Pos: astPos(start)}
+}
+
+// parseQuantifiedVar parses a quantified variable: name: Type or name: Type in <generator>
+func (p *parser) parseQuantifiedVar() ast.QuantifiedVar {
+	start := p.peek()
+
+	nameTok, ok := p.expect(lexer.IDENT)
+	if !ok {
+		return ast.QuantifiedVar{Pos: astPos(start)}
+	}
+
+	if _, ok := p.expect(lexer.COLON); !ok {
+		return ast.QuantifiedVar{Name: nameTok.Literal, Pos: astPos(start)}
+	}
+
+	typ := p.parseTypeExpr()
+
+	qv := ast.QuantifiedVar{
+		Name: nameTok.Literal,
+		Type: typ,
+		Pos:  astPos(nameTok),
+	}
+
+	if !p.at(lexer.IN) {
+		return qv
+	}
+
+	p.advance() // consume IN
+	qv.Generator = p.parseGenerator()
+
+	return qv
+}
+
+// parseGenerator parses a generator constraint after 'in':
+// 1..100 -> RangeGen
+// strings(1, 50) -> BuiltinGen
+// one_of(a, b) -> OneOfGen
+func (p *parser) parseGenerator() ast.GeneratorConstraint {
+	// Range
+	if (p.at(lexer.INT_LIT) || p.at(lexer.FLOAT_LIT) || p.at(lexer.IDENT)) && p.peekAt(1).Kind == lexer.DOTDOT {
+		lo := p.parseAtom()
+		pos := p.peek()
+		p.advance() // consume DOTDOT
+		hi := p.parseAtom()
+		return &ast.RangeGen{Lo: lo, Hi: hi, Pos: astPos(pos)}
+	}
+
+	// BuiltinGen or OneOfGen
+	nameTok, ok := p.expect(lexer.IDENT)
+	if !ok {
+		return nil
+	}
+
+	if _, ok := p.expect(lexer.LPAREN); !ok {
+		return nil
+	}
+
+	var args []ast.Expr
+	for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+		before := p.pos
+		arg := p.parseExpr(precOr)
+		if p.pos == before {
+			p.skipToParam()
+			if p.at(lexer.COMMA) {
+				p.advance() // consume COMMA
+			}
+			continue
+		}
+		args = append(args, arg)
+		if p.at(lexer.COMMA) {
+			p.advance() // consume COMMA
+		} else if !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+			p.addError(p.peek(), "expected comma between arguments")
+		}
+	}
+
+	p.expect(lexer.RPAREN)
+
+	if nameTok.Literal == "one_of" {
+		return &ast.OneOfGen{Values: args, Pos: astPos(nameTok)}
+	}
+
+	return &ast.BuiltinGen{Name: nameTok.Literal, Args: args, Pos: astPos(nameTok)}
+}
+
+// parsePropertyBody parses the statements inside a property body.
+// The body is a sequence of let-bindings and require guards,
+// ending with a terminal assertion expression.
+func (p *parser) parsePropertyBody() []ast.Stmt {
+	var stmts []ast.Stmt
+
+	for !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+		switch p.peek().Kind {
+		case lexer.LET:
+			stmts = append(stmts, p.parseLetBinding())
+		case lexer.REQUIRE:
+			stmts = append(stmts, p.parseRequireStmt())
+		default:
+			pos := p.peek()
+			expr := p.parseExpr(precOr)
+			stmts = append(stmts, &ast.AssertExpr{Expr: expr, Pos: astPos(pos)})
+		}
+	}
+
+	return stmts
+}
+
+// parseLetBinding parses: let name = expr or let (n1, n2) = expr
+func (p *parser) parseLetBinding() *ast.LetBinding {
+	start := p.advance() // consume LET
+
+	var names []string
+
+	if p.at(lexer.LPAREN) {
+		p.advance() // consume LPAREN
+		for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+			nameTok, ok := p.expect(lexer.IDENT)
+			if !ok {
+				break
+			}
+			names = append(names, nameTok.Literal)
+			if p.at(lexer.COMMA) {
+				p.advance() // consume COMMA
+			} else if !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+				p.addError(p.peek(), "expected comma between names")
+			}
+		}
+		p.expect(lexer.RPAREN)
+	} else {
+		nameTok, ok := p.expect(lexer.IDENT)
+		if !ok {
+			return &ast.LetBinding{Pos: astPos(start)}
+		}
+		names = []string{nameTok.Literal}
+	}
+
+	if _, ok := p.expect(lexer.ASSIGN); !ok {
+		return &ast.LetBinding{Names: names, Pos: astPos(start)}
+	}
+
+	expr := p.parseExpr(precOr)
+
+	return &ast.LetBinding{Names: names, Expr: expr, Pos: astPos(start)}
+}
+
+// parseRequireStmt parses: require expr
+func (p *parser) parseRequireStmt() *ast.RequireStmt {
+	start := p.advance() // consume REQUIRE
+
+	expr := p.parseExpr(precOr)
+
+	return &ast.RequireStmt{Expr: expr, Pos: astPos(start)}
+}
+
 // parseTypeExpr parses a type expression. A leading paren starts a
 // tuple like (uint, error). Otherwise it expects a type name like int
 // or Log, optionally followed by type parameters in brackets like
@@ -363,6 +596,24 @@ func (p *parser) parseExpr(minPrec precedence) ast.Expr {
 	left := p.parseAtom()
 
 	for {
+		if p.at(lexer.IS) && precPostfix >= minPrec {
+			pos := p.advance() // consume IS
+			targetTok := p.peek()
+			var target ast.IsTarget
+			switch targetTok.Kind {
+			case lexer.OK:
+				target = ast.IsOk
+			case lexer.ERROR:
+				target = ast.IsError
+			default:
+				p.addError(targetTok, "expected ok or error after 'is', got '%s'", targetTok.Kind)
+				return left
+			}
+			p.advance() // consume ok/error
+			left = &ast.IsExpr{Expr: left, Target: target, Pos: astPos(pos)}
+			continue
+		}
+
 		prec := binaryPrec(p.peek().Kind)
 		if prec == precNone || prec < minPrec {
 			break
@@ -409,6 +660,9 @@ func (p *parser) parseAtom() ast.Expr {
 		return &ast.LiteralExpr{Value: tok.Literal, Kind: ast.LiteralBool, Pos: astPos(tok)}
 	case lexer.IDENT:
 		p.advance()
+		if p.at(lexer.LPAREN) {
+			return p.parseCallArgs(tok)
+		}
 		return &ast.IdentExpr{Name: tok.Literal, Pos: astPos(tok)}
 	case lexer.LPAREN:
 		p.advance()
@@ -424,6 +678,35 @@ func (p *parser) parseAtom() ast.Expr {
 	}
 }
 
+// parseCallArgs parses the argument list of a function call.
+// The function name token has already been consumed.
+func (p *parser) parseCallArgs(nameTok lexer.Token) *ast.CallExpr {
+	p.advance() // consume LPAREN
+
+	var args []ast.Expr
+	for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+		before := p.pos
+		arg := p.parseExpr(precOr)
+		if p.pos == before {
+			p.skipToParam()
+			if p.at(lexer.COMMA) {
+				p.advance() // consume COMMA
+			}
+			continue
+		}
+		args = append(args, arg)
+		if p.at(lexer.COMMA) {
+			p.advance() // consume COMMA
+		} else if !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
+			p.addError(p.peek(), "expected comma between arguments")
+		}
+	}
+
+	p.expect(lexer.RPAREN)
+
+	return &ast.CallExpr{Func: nameTok.Literal, Args: args, Pos: astPos(nameTok)}
+}
+
 // PRIVATE HELPERS
 
 // skipToDecl advances past tokens until a declaration start, closing brace,
@@ -431,7 +714,7 @@ func (p *parser) parseAtom() ast.Expr {
 func (p *parser) skipToDecl() {
 	for {
 		switch p.peek().Kind {
-		case lexer.TYPE, lexer.FUNC, lexer.PREDICATE, lexer.RBRACE, lexer.EOF:
+		case lexer.TYPE, lexer.FUNC, lexer.PREDICATE, lexer.PROPERTY, lexer.RBRACE, lexer.EOF:
 			return
 		}
 		p.advance()
@@ -488,6 +771,14 @@ func (p *parser) peek() lexer.Token {
 		return lexer.Token{Kind: lexer.EOF}
 	}
 	return p.tokens[p.pos]
+}
+
+func (p *parser) peekAt(offset int) lexer.Token {
+	idx := p.pos + offset
+	if idx >= len(p.tokens) {
+		return lexer.Token{Kind: lexer.EOF}
+	}
+	return p.tokens[idx]
 }
 
 func (p *parser) addError(tok lexer.Token, format string, args ...any) {

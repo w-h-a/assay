@@ -16,6 +16,7 @@ const (
 	precComparison                // == != < > <= >=
 	precAddition                  // + -
 	precMultiplication            // * / %
+	precPostfix                   // is
 )
 
 // binaryPrec returns the precedence of a binary operator token,
