@@ -1059,3 +1059,116 @@ func TestParsePropertyErrorMalformedForallVar(t *testing.T) {
 	// assert
 	require.NotEmpty(t, errs)
 }
+
+func TestParsePropertyWhereClause(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func div(a: int, b: int) -> int
+
+                property div_identity forall(a: int, b: int) where b != 0 {
+                        div(a * b, b) == a
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[1].(*ast.PropertyDecl)
+	require.Equal(t, "div_identity", pd.Name)
+	require.Equal(t, ast.Contractual, pd.Shape)
+
+	require.NotNil(t, pd.Where)
+	require.Equal(t, 4, pd.Where.Pos.Line)
+	cond := pd.Where.Condition.(*ast.BinaryExpr)
+	require.Equal(t, "!=", cond.Op)
+	require.Equal(t, "b", cond.Left.(*ast.IdentExpr).Name)
+	require.Equal(t, "0", cond.Right.(*ast.LiteralExpr).Value)
+
+	require.Len(t, pd.Body, 1)
+	assert := pd.Body[0].(*ast.AssertExpr)
+	eq := assert.Expr.(*ast.BinaryExpr)
+	require.Equal(t, "==", eq.Op)
+}
+
+func TestParsePropertyWhereWithSequentialBody(t *testing.T) {
+	// arrange — where clause combined with let-bindings
+	source := `spec "test" {
+                  func div(a: int, b: int) -> (int, error)
+
+                  property div_round_trip forall(a: int, b: int) where b != 0 {
+                          let (result, err) = div(a * b, b)
+                          require err is ok
+                          result == a
+                  }
+          }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[1].(*ast.PropertyDecl)
+	require.Equal(t, "div_round_trip", pd.Name)
+
+	require.NotNil(t, pd.Where)
+	cond := pd.Where.Condition.(*ast.BinaryExpr)
+	require.Equal(t, "!=", cond.Op)
+
+	require.Equal(t, ast.Sequential, pd.Shape)
+
+	require.Len(t, pd.Body, 3)
+	_ = pd.Body[0].(*ast.LetBinding)
+	_ = pd.Body[1].(*ast.RequireStmt)
+	_ = pd.Body[2].(*ast.AssertExpr)
+}
+
+func TestParsePropertyErrorMalformedWhere(t *testing.T) {
+	// arrange
+	source := `spec "test" { property p forall(x: int) where { x > 0 } }`
+
+	// act
+	_, errs := Parse(source, "test.assay")
+
+	// assert
+	require.NotEmpty(t, errs)
+}
+
+func TestParsePropertySingleLet(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                func double(x: int) -> int
+
+                property double_is_sum forall(x: int) {
+                        let y = double(x)
+                        y == x + x
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[1].(*ast.PropertyDecl)
+	require.Equal(t, "double_is_sum", pd.Name)
+	require.Equal(t, ast.Sequential, pd.Shape)
+
+	require.Len(t, pd.Body, 2)
+
+	let0 := pd.Body[0].(*ast.LetBinding)
+	require.Equal(t, []string{"y"}, let0.Names)
+	call := let0.Expr.(*ast.CallExpr)
+	require.Equal(t, "double", call.Func)
+	require.Len(t, call.Args, 1)
+	require.Equal(t, "x", call.Args[0].(*ast.IdentExpr).Name)
+
+	assert := pd.Body[1].(*ast.AssertExpr)
+	eq := assert.Expr.(*ast.BinaryExpr)
+	require.Equal(t, "==", eq.Op)
+	require.Equal(t, "y", eq.Left.(*ast.IdentExpr).Name)
+}
