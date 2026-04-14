@@ -1315,3 +1315,229 @@ func TestParseReadAfterWriteFromPitch(t *testing.T) {
 	require.Equal(t, "result", eq.Left.(*ast.IdentExpr).Name)
 	require.Equal(t, "value", eq.Right.(*ast.IdentExpr).Name)
 }
+
+func TestParseMathSpec(t *testing.T) {
+	// arrange — full math spec from pitch
+	source := `spec "math" {
+                func add(a: int, b: int) -> int
+
+                property commutative
+                        forall(a: int, b: int)
+                {
+                        add(a, b) == add(b, a)
+                }
+
+                property identity
+                        forall(a: int)
+                {
+                        add(a, 0) == a
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "math.assay")
+
+	// assert
+	require.Empty(t, errs)
+	require.Equal(t, "math", spec.Name)
+	require.Len(t, spec.Declarations, 3)
+
+	fd := spec.Declarations[0].(*ast.FuncDecl)
+	require.Equal(t, "add", fd.Name)
+	require.Len(t, fd.Params, 2)
+	require.Len(t, fd.Returns, 1)
+	require.Equal(t, "int", fd.Returns[0].Name)
+
+	comm := spec.Declarations[1].(*ast.PropertyDecl)
+	require.Equal(t, "commutative", comm.Name)
+	require.Equal(t, ast.Contractual, comm.Shape)
+	require.Len(t, comm.Forall.Vars, 2)
+	require.Nil(t, comm.Where)
+	require.Len(t, comm.Body, 1)
+	commAssert := comm.Body[0].(*ast.AssertExpr)
+	commEq := commAssert.Expr.(*ast.BinaryExpr)
+	require.Equal(t, "==", commEq.Op)
+	require.Equal(t, "add", commEq.Left.(*ast.CallExpr).Func)
+	require.Equal(t, "add", commEq.Right.(*ast.CallExpr).Func)
+
+	ident := spec.Declarations[2].(*ast.PropertyDecl)
+	require.Equal(t, "identity", ident.Name)
+	require.Equal(t, ast.Contractual, ident.Shape)
+	require.Len(t, ident.Forall.Vars, 1)
+	require.Equal(t, "a", ident.Forall.Vars[0].Name)
+	require.Nil(t, ident.Where)
+	require.Len(t, ident.Body, 1)
+	identAssert := ident.Body[0].(*ast.AssertExpr)
+	identEq := identAssert.Expr.(*ast.BinaryExpr)
+	require.Equal(t, "==", identEq.Op)
+	lhs := identEq.Left.(*ast.CallExpr)
+	require.Equal(t, "add", lhs.Func)
+	require.Len(t, lhs.Args, 2)
+	require.Equal(t, "a", lhs.Args[0].(*ast.IdentExpr).Name)
+	require.Equal(t, "0", lhs.Args[1].(*ast.LiteralExpr).Value)
+	require.Equal(t, "a", identEq.Right.(*ast.IdentExpr).Name)
+}
+
+func TestParseLogSpec(t *testing.T) {
+	// arrange — full log spec from pitch
+	source := `spec "log" {
+                type Log
+                func new_log() -> Log
+                func append(log: Log, value: bytes) -> (uint, error)
+                func read(log: Log, offset: uint) -> (bytes, error)
+
+                predicate non_empty(v: bytes) {
+                        len(v) > 0
+                }
+
+                property read_after_write
+                        forall(value: bytes)
+                        where non_empty(value)
+                {
+                        let log = new_log()
+                        let (offset, err) = append(log, value)
+                        require err is ok
+                        let (result, err2) = read(log, offset)
+                        require err2 is ok
+                        result == value
+                }
+
+                property append_monotonic
+                        forall(a: bytes, b: bytes)
+                        where non_empty(a) and non_empty(b)
+                {
+                        let log = new_log()
+                        let (off_a, _) = append(log, a)
+                        let (off_b, _) = append(log, b)
+                        off_b > off_a
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "log.assay")
+
+	// assert
+	require.Empty(t, errs)
+	require.Equal(t, "log", spec.Name)
+	require.Len(t, spec.Declarations, 7)
+
+	require.Equal(t, "Log", spec.Declarations[0].(*ast.TypeDecl).Name)
+	require.Equal(t, "new_log", spec.Declarations[1].(*ast.FuncDecl).Name)
+
+	appendFn := spec.Declarations[2].(*ast.FuncDecl)
+	require.Equal(t, "append", appendFn.Name)
+	require.Len(t, appendFn.Returns, 2)
+	require.Equal(t, "uint", appendFn.Returns[0].Name)
+	require.Equal(t, "error", appendFn.Returns[1].Name)
+
+	readFn := spec.Declarations[3].(*ast.FuncDecl)
+	require.Equal(t, "read", readFn.Name)
+	require.Len(t, readFn.Returns, 2)
+
+	pred := spec.Declarations[4].(*ast.PredicateDecl)
+	require.Equal(t, "non_empty", pred.Name)
+	require.Len(t, pred.Params, 1)
+	require.Equal(t, "v", pred.Params[0].Name)
+
+	raw := spec.Declarations[5].(*ast.PropertyDecl)
+	require.Equal(t, "read_after_write", raw.Name)
+	require.Equal(t, ast.Sequential, raw.Shape)
+	require.Len(t, raw.Forall.Vars, 1)
+	require.Equal(t, "value", raw.Forall.Vars[0].Name)
+	require.NotNil(t, raw.Where)
+	require.Equal(t, "non_empty", raw.Where.Condition.(*ast.CallExpr).Func)
+	require.Len(t, raw.Body, 6)
+
+	mono := spec.Declarations[6].(*ast.PropertyDecl)
+	require.Equal(t, "append_monotonic", mono.Name)
+	require.Equal(t, ast.Sequential, mono.Shape)
+	require.Len(t, mono.Forall.Vars, 2)
+	require.NotNil(t, mono.Where)
+	monoWhere := mono.Where.Condition.(*ast.BinaryExpr)
+	require.Equal(t, "and", monoWhere.Op)
+	require.Len(t, mono.Body, 4)
+
+	monoLet0 := mono.Body[0].(*ast.LetBinding)
+	require.Equal(t, []string{"log"}, monoLet0.Names)
+
+	monoLet1 := mono.Body[1].(*ast.LetBinding)
+	require.Equal(t, []string{"off_a", "_"}, monoLet1.Names)
+
+	monoLet2 := mono.Body[2].(*ast.LetBinding)
+	require.Equal(t, []string{"off_b", "_"}, monoLet2.Names)
+
+	monoAssert := mono.Body[3].(*ast.AssertExpr)
+	monoGt := monoAssert.Expr.(*ast.BinaryExpr)
+	require.Equal(t, ">", monoGt.Op)
+	require.Equal(t, "off_b", monoGt.Left.(*ast.IdentExpr).Name)
+	require.Equal(t, "off_a", monoGt.Right.(*ast.IdentExpr).Name)
+}
+
+func TestParseErrorRecoverySkipsMalformed(t *testing.T) {
+	// arrange — valid func, malformed declaration with braces, valid func
+	source := `spec "test" {
+                func add(a: int, b: int) -> int
+
+                property { garbage + 1 }
+
+                func sub(a: int, b: int) -> int
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert — errors reported for the malformed declaration
+	require.NotEmpty(t, errs)
+
+	// assert — both valid funcs parsed
+	var funcs []*ast.FuncDecl
+	for _, d := range spec.Declarations {
+		if fd, ok := d.(*ast.FuncDecl); ok {
+			funcs = append(funcs, fd)
+		}
+	}
+	require.Len(t, funcs, 2)
+	require.Equal(t, "add", funcs[0].Name)
+	require.Equal(t, "sub", funcs[1].Name)
+}
+
+func TestParsePropertyShapeContractualVsSequential(t *testing.T) {
+	// arrange — identity is contractual, read_after_write is sequential
+	source := `spec "test" {
+                func add(a: int, b: int) -> int
+                func new_log() -> Log
+                func append(log: Log, value: bytes) -> (uint, error)
+                func read(log: Log, offset: uint) -> (bytes, error)
+
+                property identity
+                        forall(a: int)
+                {
+                        add(a, 0) == a
+                }
+
+                property read_after_write
+                        forall(value: bytes)
+                {
+                        let log = new_log()
+                        let (offset, err) = append(log, value)
+                        require err is ok
+                        let (result, err2) = read(log, offset)
+                        require err2 is ok
+                        result == value
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	identity := spec.Declarations[4].(*ast.PropertyDecl)
+	require.Equal(t, "identity", identity.Name)
+	require.Equal(t, ast.Contractual, identity.Shape)
+
+	raw := spec.Declarations[5].(*ast.PropertyDecl)
+	require.Equal(t, "read_after_write", raw.Name)
+	require.Equal(t, ast.Sequential, raw.Shape)
+}
