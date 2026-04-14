@@ -54,9 +54,13 @@ func (p *parser) parseSpec() *ast.SpecDecl {
 
 	var decls []ast.Decl
 	for !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+		before := p.pos
 		decl := p.parseDecl()
 		if decl != nil {
 			decls = append(decls, decl)
+		}
+		if p.pos == before {
+			p.skipToDecl()
 		}
 	}
 
@@ -476,6 +480,7 @@ func (p *parser) parsePropertyBody() []ast.Stmt {
 	var stmts []ast.Stmt
 
 	for !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
+		before := p.pos
 		switch p.peek().Kind {
 		case lexer.LET:
 			stmts = append(stmts, p.parseLetBinding())
@@ -485,6 +490,9 @@ func (p *parser) parsePropertyBody() []ast.Stmt {
 			pos := p.peek()
 			expr := p.parseExpr(precOr)
 			stmts = append(stmts, &ast.AssertExpr{Expr: expr, Pos: astPos(pos)})
+		}
+		if p.pos == before {
+			p.skipToPropertyStmt()
 		}
 	}
 
@@ -500,11 +508,23 @@ func (p *parser) parseLetBinding() *ast.LetBinding {
 	if p.at(lexer.LPAREN) {
 		p.advance() // consume LPAREN
 		for !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
-			nameTok, ok := p.expect(lexer.IDENT)
-			if !ok {
-				break
+			before := p.pos
+			if p.at(lexer.UNDERSCORE) {
+				p.advance()
+				names = append(names, "_")
+			} else {
+				nameTok, ok := p.expect(lexer.IDENT)
+				if ok {
+					names = append(names, nameTok.Literal)
+				}
 			}
-			names = append(names, nameTok.Literal)
+			if p.pos == before {
+				p.skipToParam()
+				if p.at(lexer.COMMA) {
+					p.advance() // consume COMMA
+				}
+				continue
+			}
 			if p.at(lexer.COMMA) {
 				p.advance() // consume COMMA
 			} else if !p.at(lexer.RPAREN) && !p.at(lexer.EOF) {
@@ -742,15 +762,33 @@ func (p *parser) parseCallArgs(nameTok lexer.Token) *ast.CallExpr {
 
 // PRIVATE HELPERS
 
-// skipToDecl advances past tokens until a declaration start, closing brace,
-// or EOF is found. Used for error recovery.
+// skipToDecl advances past tokens until a declaration start or closing brace
+// at the spec level is found. Brace depth is tracked so that nested blocks
+// inside malformed declarations are consumed entirely.
 func (p *parser) skipToDecl() {
+	depth := 0
 	for {
 		switch p.peek().Kind {
-		case lexer.TYPE, lexer.FUNC, lexer.PREDICATE, lexer.PROPERTY, lexer.RBRACE, lexer.EOF:
+		case lexer.LBRACE:
+			depth++
+			p.advance()
+		case lexer.RBRACE:
+			if depth > 0 {
+				depth--
+				p.advance()
+				continue
+			}
 			return
+		case lexer.TYPE, lexer.FUNC, lexer.PREDICATE, lexer.PROPERTY:
+			if depth == 0 {
+				return
+			}
+			p.advance()
+		case lexer.EOF:
+			return
+		default:
+			p.advance()
 		}
-		p.advance()
 	}
 }
 
@@ -772,6 +810,18 @@ func (p *parser) skipToParam() {
 	for {
 		switch p.peek().Kind {
 		case lexer.COMMA, lexer.RPAREN, lexer.EOF:
+			return
+		}
+		p.advance()
+	}
+}
+
+// skipToPropertyStmt advances past tokens until a statement start or
+// closing brace is found. Used for error recovery.
+func (p *parser) skipToPropertyStmt() {
+	for {
+		switch p.peek().Kind {
+		case lexer.LET, lexer.REQUIRE, lexer.RBRACE, lexer.EOF:
 			return
 		}
 		p.advance()
