@@ -1172,3 +1172,146 @@ func TestParsePropertySingleLet(t *testing.T) {
 	require.Equal(t, "==", eq.Op)
 	require.Equal(t, "y", eq.Left.(*ast.IdentExpr).Name)
 }
+
+func TestParseFieldAccess(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                predicate p(x: int) { x.value }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[0].(*ast.PredicateDecl)
+	fa := pd.Body.(*ast.FieldAccessExpr)
+	require.Equal(t, "x", fa.Object.(*ast.IdentExpr).Name)
+	require.Equal(t, "value", fa.Field)
+}
+
+func TestParseChainedFieldAccess(t *testing.T) {
+	// arrange — a.b.c should parse as (a.b).c
+	source := `spec "test" {
+                predicate p(x: int) { a.b.c }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[0].(*ast.PredicateDecl)
+	outer := pd.Body.(*ast.FieldAccessExpr)
+	require.Equal(t, "c", outer.Field)
+
+	inner := outer.Object.(*ast.FieldAccessExpr)
+	require.Equal(t, "b", inner.Field)
+	require.Equal(t, "a", inner.Object.(*ast.IdentExpr).Name)
+}
+
+func TestParseFieldAccessInExpression(t *testing.T) {
+	// arrange — field access binds tighter than comparison
+	source := `spec "test" {
+                predicate p(x: int) { x.len > 0 }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+
+	pd := spec.Declarations[0].(*ast.PredicateDecl)
+	bin := pd.Body.(*ast.BinaryExpr)
+	require.Equal(t, ">", bin.Op)
+
+	fa := bin.Left.(*ast.FieldAccessExpr)
+	require.Equal(t, "x", fa.Object.(*ast.IdentExpr).Name)
+	require.Equal(t, "len", fa.Field)
+
+	require.Equal(t, "0", bin.Right.(*ast.LiteralExpr).Value)
+}
+
+func TestParseReadAfterWriteFromPitch(t *testing.T) {
+	// arrange — the full read_after_write property from the pitch
+	source := `spec "log" {
+                type Log
+                func new_log() -> Log
+                func append(log: Log, value: bytes) -> (uint, error)
+                func read(log: Log, offset: uint) -> (bytes, error)
+
+                predicate non_empty(v: bytes) {
+                        len(v) > 0
+                }
+
+                property read_after_write
+                        forall(value: bytes)
+                        where non_empty(value)
+                {
+                        let log = new_log()
+                        let (offset, err) = append(log, value)
+                        require err is ok
+                        let (result, err2) = read(log, offset)
+                        require err2 is ok
+                        result == value
+                }
+        }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+	require.Len(t, spec.Declarations, 6)
+
+	require.Equal(t, "Log", spec.Declarations[0].(*ast.TypeDecl).Name)
+	require.Equal(t, "new_log", spec.Declarations[1].(*ast.FuncDecl).Name)
+	require.Equal(t, "append", spec.Declarations[2].(*ast.FuncDecl).Name)
+	require.Equal(t, "read", spec.Declarations[3].(*ast.FuncDecl).Name)
+	require.Equal(t, "non_empty", spec.Declarations[4].(*ast.PredicateDecl).Name)
+
+	pd := spec.Declarations[5].(*ast.PropertyDecl)
+	require.Equal(t, "read_after_write", pd.Name)
+	require.Equal(t, ast.Sequential, pd.Shape)
+
+	require.Len(t, pd.Forall.Vars, 1)
+	require.Equal(t, "value", pd.Forall.Vars[0].Name)
+	require.Equal(t, "bytes", pd.Forall.Vars[0].Type.Name)
+
+	require.NotNil(t, pd.Where)
+	whereCond := pd.Where.Condition.(*ast.CallExpr)
+	require.Equal(t, "non_empty", whereCond.Func)
+
+	require.Len(t, pd.Body, 6)
+
+	let0 := pd.Body[0].(*ast.LetBinding)
+	require.Equal(t, []string{"log"}, let0.Names)
+	require.Equal(t, "new_log", let0.Expr.(*ast.CallExpr).Func)
+
+	let1 := pd.Body[1].(*ast.LetBinding)
+	require.Equal(t, []string{"offset", "err"}, let1.Names)
+	require.Equal(t, "append", let1.Expr.(*ast.CallExpr).Func)
+
+	req0 := pd.Body[2].(*ast.RequireStmt)
+	is0 := req0.Expr.(*ast.IsExpr)
+	require.Equal(t, "err", is0.Expr.(*ast.IdentExpr).Name)
+	require.Equal(t, ast.IsOk, is0.Target)
+
+	let2 := pd.Body[3].(*ast.LetBinding)
+	require.Equal(t, []string{"result", "err2"}, let2.Names)
+	require.Equal(t, "read", let2.Expr.(*ast.CallExpr).Func)
+
+	req1 := pd.Body[4].(*ast.RequireStmt)
+	is1 := req1.Expr.(*ast.IsExpr)
+	require.Equal(t, "err2", is1.Expr.(*ast.IdentExpr).Name)
+	require.Equal(t, ast.IsOk, is1.Target)
+
+	assert := pd.Body[5].(*ast.AssertExpr)
+	eq := assert.Expr.(*ast.BinaryExpr)
+	require.Equal(t, "==", eq.Op)
+	require.Equal(t, "result", eq.Left.(*ast.IdentExpr).Name)
+	require.Equal(t, "value", eq.Right.(*ast.IdentExpr).Name)
+}

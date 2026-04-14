@@ -604,7 +604,7 @@ func (p *parser) parseTupleType() ast.TypeExpr {
 // operators at the same level, forcing them back to the outer call.
 // This makes same-precedence operators left-associative.
 func (p *parser) parseExpr(minPrec precedence) ast.Expr {
-	left := p.parseAtom()
+	left := p.parsePostfix()
 
 	for {
 		if p.at(lexer.IS) && precPostfix >= minPrec {
@@ -640,6 +640,28 @@ func (p *parser) parseExpr(minPrec precedence) ast.Expr {
 	}
 
 	return left
+}
+
+// parsePostfix wraps parseAtom with a loop that handles field access
+// (expr.field). Field access binds tighter than all binary and postfix
+// operators, so it is resolved before precedence climbing sees the result.
+func (p *parser) parsePostfix() ast.Expr {
+	expr := p.parseAtom()
+
+	for p.at(lexer.DOT) {
+		pos := p.advance() // consume DOT
+		fieldTok, ok := p.expect(lexer.IDENT)
+		if !ok {
+			return expr
+		}
+		expr = &ast.FieldAccessExpr{
+			Object: expr,
+			Field:  fieldTok.Literal,
+			Pos:    astPos(pos),
+		}
+	}
+
+	return expr
 }
 
 // parseAtom parses an atomic expression: literal, identifiers, or
