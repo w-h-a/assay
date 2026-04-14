@@ -298,6 +298,7 @@ func (p *parser) parseParam() ast.Param {
 
 // parsePropertyDecl parses a property declaration:
 // property name forall(x: int, n: int in 1..100) { body }
+// property name forall(x: int, n: int in 1..100) where expr { body }
 func (p *parser) parsePropertyDecl() *ast.PropertyDecl {
 	start := p.advance() // consume PROPERTY
 
@@ -312,10 +313,18 @@ func (p *parser) parsePropertyDecl() *ast.PropertyDecl {
 
 	forall := p.parseForallClause()
 
+	var where *ast.WhereClause
+	if p.at(lexer.WHERE) {
+		wTok := p.advance() // consume WHERE
+		cond := p.parseExpr(precOr)
+		where = &ast.WhereClause{Condition: cond, Pos: astPos(wTok)}
+	}
+
 	if _, ok := p.expect(lexer.LBRACE); !ok {
 		return &ast.PropertyDecl{
 			Name:   nameTok.Literal,
 			Forall: forall,
+			Where:  where,
 			Pos:    astPos(start),
 		}
 	}
@@ -338,8 +347,10 @@ func (p *parser) parsePropertyDecl() *ast.PropertyDecl {
 	return &ast.PropertyDecl{
 		Name:   nameTok.Literal,
 		Forall: forall,
+		Where:  where,
 		Body:   body,
 		Shape:  shape,
+		Pos:    astPos(start),
 	}
 }
 
