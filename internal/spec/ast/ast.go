@@ -10,6 +10,12 @@ type Decl interface {
 	decNode()
 }
 
+// ValidatedSpec wraps a parsed SpecDecl with type-checker annotations.
+// It is the contract between the checker and downstream consumers (backends).
+type ValidatedSpec struct {
+	Spec *SpecDecl
+}
+
 // SpecDecl is the root node representing an entire spec.
 type SpecDecl struct {
 	Name         string
