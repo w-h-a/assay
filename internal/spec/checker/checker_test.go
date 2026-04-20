@@ -57,6 +57,7 @@ func TestCheckDuplicateTypeNames(t *testing.T) {
 func TestCheckDuplicateFuncNames(t *testing.T) {
 	// arrange
 	spec := parseValid(t, `spec "test" {
+				type Log
                 func new_log() -> Log
                 func new_log() -> Log
         }`)
@@ -212,6 +213,207 @@ func TestCheckIgnoresEmptyNamesFromParserRecovery(t *testing.T) {
 	// assert -- checker should not report duplicates for empty names;
 	// the parser already reported the missing identifiers.
 	require.Empty(t, errs)
+}
+
+func TestCheckValidStructFieldTypes(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry {
+                          offset: uint,
+                          data: bytes
+                  }
+          }`)
+
+	// act
+	validated, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+	require.Equal(t, spec, validated.Spec)
+}
+
+func TestCheckUndefinedStructFieldType(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry {
+                          data: Blob
+                  }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "Blob")
+	require.Contains(t, errs[0].Message, "undefined type")
+	require.Equal(t, 3, errs[0].Pos.Line)
+}
+
+func TestCheckStructFieldResolvesToDeclaredType(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Log
+                  type Entry {
+                          source: Log,
+                          offset: uint
+                  }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckUndefinedFuncParamType(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  func read(log: Store) -> bytes
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "Store")
+	require.Contains(t, errs[0].Message, "undefined type")
+	require.Equal(t, 2, errs[0].Pos.Line)
+}
+
+func TestCheckUndefinedFuncReturnType(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  func create() -> Widget
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "Widget")
+	require.Contains(t, errs[0].Message, "undefined type")
+}
+
+func TestCheckValidFuncSignatureWithBuiltins(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  func compute(a: int, b: float) -> (uint, error)
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckValidFuncSignatureWithDeclaredType(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Log
+                  func new_log() -> Log
+                  func append(log: Log, value: bytes) -> (uint, error)
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckParameterizedTypeInnerResolution(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry
+                  func entries() -> list[Entry]
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckUndefinedInnerTypeInParameterized(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  func entries() -> list[Widget]
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "Widget")
+	require.Contains(t, errs[0].Message, "undefined type")
+}
+
+func TestCheckNestedParameterizedTypes(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry {
+                          items: option[list[int]]
+                  }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckUndefinedInNestedParameterizedType(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry {
+                          items: option[list[Widget]]
+                  }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "Widget")
+	require.Contains(t, errs[0].Message, "undefined type")
+}
+
+func TestCheckMapParameterizedType(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  func get(store: map[string, bytes], key: string) -> option[bytes]
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckMultipleUndefinedTypes(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry {
+                          data: Blob
+                  }
+                  func read(log: Store) -> Widget
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 3)
 }
 
 // parseValid parses source and fails the test if parsing produces errors.
