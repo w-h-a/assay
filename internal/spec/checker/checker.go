@@ -26,6 +26,8 @@ func Check(spec *ast.SpecDecl) (*ast.ValidatedSpec, []Error) {
 
 	c.registerDeclarations(spec.Declarations)
 
+	c.resolveDeclarations(spec.Declarations)
+
 	return &ast.ValidatedSpec{Spec: spec}, c.errors
 }
 
@@ -68,6 +70,60 @@ func (c *checker) define(name string, kind symbolKind, pos ast.Position) {
 	}
 
 	c.env[name] = symbol{kind: kind, pos: pos}
+}
+
+// resolveDeclarations walks declarations and checks that all type
+// references resolve to known types
+func (c *checker) resolveDeclarations(decls []ast.Decl) {
+	for _, d := range decls {
+		switch d := d.(type) {
+		case *ast.TypeDecl:
+			for _, f := range d.Fields {
+				c.resolveTypeExpr(f.Type)
+			}
+		case *ast.FuncDecl:
+			for _, p := range d.Params {
+				c.resolveTypeExpr(p.Type)
+			}
+			for _, r := range d.Returns {
+				c.resolveTypeExpr(r)
+			}
+		}
+	}
+}
+
+// resolveTypeExpr checks that a type expression refers to known types.
+// It recurses into parameterized types and tuple elements.
+func (c *checker) resolveTypeExpr(te ast.TypeExpr) {
+	switch {
+	case len(te.Elements) > 0:
+		for _, e := range te.Elements {
+			c.resolveTypeExpr(e)
+		}
+	case len(te.Params) > 0:
+		if te.Name != "" && !c.isKnownType(te.Name) {
+			c.addError(te.Pos, "undefined type %q", te.Name)
+		}
+		for _, p := range te.Params {
+			c.resolveTypeExpr(p)
+		}
+	default:
+		if te.Name == "" {
+			return
+		}
+		if c.isKnownType(te.Name) {
+			return
+		}
+		c.addError(te.Pos, "undefined type %q", te.Name)
+	}
+}
+
+func (c *checker) isKnownType(name string) bool {
+	if builtinTypes[name] {
+		return true
+	}
+	s, exists := c.env[name]
+	return exists && s.kind == symbolType
 }
 
 func (c *checker) addError(pos ast.Position, format string, args ...any) {

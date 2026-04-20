@@ -15,3 +15,17 @@ type symbol struct {
 	kind symbolKind
 	pos  ast.Position
 }
+
+var builtinTypes = map[string]bool{
+	"bool":   true,
+	"int":    true,
+	"uint":   true,
+	"float":  true,
+	"string": true,
+	"bytes":  true,
+	"error":  true,
+	"list":   true,
+	"set":    true,
+	"map":    true,
+	"option": true,
+}
