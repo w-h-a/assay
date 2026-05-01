@@ -16,16 +16,17 @@ type symbol struct {
 	pos  ast.Position
 }
 
-var builtinTypes = map[string]bool{
-	"bool":   true,
-	"int":    true,
-	"uint":   true,
-	"float":  true,
-	"string": true,
-	"bytes":  true,
-	"error":  true,
-	"list":   true,
-	"set":    true,
-	"map":    true,
-	"option": true,
+// builtinTypes maps builtin type names to their arity.
+var builtinTypes = map[string]int{
+	"bool":   0,
+	"int":    0,
+	"uint":   0,
+	"float":  0,
+	"string": 0,
+	"bytes":  0,
+	"error":  0,
+	"list":   1,
+	"set":    1,
+	"map":    2,
+	"option": 1,
 }

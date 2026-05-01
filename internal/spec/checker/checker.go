@@ -104,6 +104,15 @@ func (c *checker) resolveTypeExpr(te ast.TypeExpr) {
 		if te.Name != "" && !c.isKnownType(te.Name) {
 			c.addError(te.Pos, "undefined type %q", te.Name)
 		}
+		if arity, ok := builtinTypes[te.Name]; ok {
+			if arity == 0 {
+				c.addError(te.Pos, "type %q does not accept type parameters", te.Name)
+			} else if len(te.Params) != arity {
+				c.addError(te.Pos, "type %q expects %d type parameter(s), got %d", te.Name, arity, len(te.Params))
+			}
+		} else if te.Name != "" && c.isKnownType(te.Name) {
+			c.addError(te.Pos, "type %q does not accept type parameters", te.Name)
+		}
 		for _, p := range te.Params {
 			c.resolveTypeExpr(p)
 		}
@@ -111,15 +120,18 @@ func (c *checker) resolveTypeExpr(te ast.TypeExpr) {
 		if te.Name == "" {
 			return
 		}
-		if c.isKnownType(te.Name) {
+		if !c.isKnownType(te.Name) {
+			c.addError(te.Pos, "undefined type %q", te.Name)
 			return
 		}
-		c.addError(te.Pos, "undefined type %q", te.Name)
+		if arity, ok := builtinTypes[te.Name]; ok && arity > 0 {
+			c.addError(te.Pos, "type %q expects %d type parameter(s), got 0", te.Name, arity)
+		}
 	}
 }
 
 func (c *checker) isKnownType(name string) bool {
-	if builtinTypes[name] {
+	if _, ok := builtinTypes[name]; ok {
 		return true
 	}
 	s, exists := c.env[name]

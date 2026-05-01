@@ -416,6 +416,95 @@ func TestCheckMultipleUndefinedTypes(t *testing.T) {
 	require.Len(t, errs, 3)
 }
 
+func TestCheckBareParameterizedType(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry {
+                          items: list
+                  }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "list")
+	require.Contains(t, errs[0].Message, "expects 1 type parameter(s)")
+}
+
+func TestCheckScalarWithTypeParameters(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry {
+                          data: bool[string]
+                  }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "bool")
+	require.Contains(t, errs[0].Message, "does not accept type parameters")
+}
+
+func TestCheckWrongTypeParameterCount(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry {
+                          data: map[string]
+                  }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "map")
+	require.Contains(t, errs[0].Message, "expects 2 type parameter(s), got 1")
+}
+
+func TestCheckCorrectParameterizedTypeUsage(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Entry {
+                          items: list[int],
+                          tags: set[string],
+                          metadata: map[string, bytes],
+                          parent: option[error],
+                          count: int,
+                          flag: bool
+                  }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckUserDefinedTypeWithTypeParameters(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                    type Entry
+                    type Container {
+                            data: Entry[string]
+                    }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "Entry")
+	require.Contains(t, errs[0].Message, "does not accept type parameters")
+}
+
 // parseValid parses source and fails the test if parsing produces errors.
 func parseValid(t *testing.T, source string) *ast.SpecDecl {
 	t.Helper()
