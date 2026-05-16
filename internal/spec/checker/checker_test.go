@@ -514,3 +514,93 @@ func parseValid(t *testing.T, source string) *ast.SpecDecl {
 
 	return spec
 }
+
+func TestCheckPredicateParamTypesResolve(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Log
+                  predicate has_entries(log: Log, count: uint) { count > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckPredicateUndefinedParamType(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  predicate valid(v: Widget) { v > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "Widget")
+	require.Contains(t, errs[0].Message, "undefined type")
+}
+
+func TestCheckPredicateRejectsSpecFuncCall(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "test" {
+                  type Log
+                  func new_log() -> Log
+                  predicate bad(x: int) { new_log() > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "new_log")
+	require.Contains(t, errs[0].Message, "cannot call function")
+	require.Contains(t, errs[0].Message, "predicate body")
+}
+
+func TestCheckPredicateAllowsBuiltinCall(t *testing.T) {
+	// arrange — len is not a spec-declared function, so it passes
+	spec := parseValid(t, `spec "test" {
+                  predicate non_empty(v: bytes) { len(v) > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckPredicateRejectsNestedSpecFuncCall(t *testing.T) {
+	// arrange — spec func call nested inside a binary expression
+	spec := parseValid(t, `spec "test" {
+                  func compute(x: int) -> int
+                  predicate bad(x: int) { compute(x) > 0 and x > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "compute")
+	require.Contains(t, errs[0].Message, "cannot call function")
+}
+
+func TestCheckPredicateAllowsPredicateCall(t *testing.T) {
+	// arrange — predicate calling another predicate is safe (both are pure)
+	spec := parseValid(t, `spec "test" {
+                    predicate positive(x: int) { x > 0 }
+                    predicate valid(x: int) { positive(x) }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
