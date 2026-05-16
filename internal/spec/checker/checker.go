@@ -88,6 +88,11 @@ func (c *checker) resolveDeclarations(decls []ast.Decl) {
 			for _, r := range d.Returns {
 				c.resolveTypeExpr(r)
 			}
+		case *ast.PredicateDecl:
+			for _, p := range d.Params {
+				c.resolveTypeExpr(p.Type)
+			}
+			c.checkPredicateBody(d.Body)
 		}
 	}
 }
@@ -136,6 +141,57 @@ func (c *checker) isKnownType(name string) bool {
 	}
 	s, exists := c.env[name]
 	return exists && s.kind == symbolType
+}
+
+// checkPredicateBody validates that a predicate body does not call
+// spec-declared functions.
+// Predicates appear in property `where` clauses. Given:
+//
+//	property p forall(value: bytes) where non_empty(value) { ... }
+//
+// the test framework generates random bytes values. For
+// each one it evaluates non_empty(value). If the result is false, it
+// discards that value and generates another. If true, it runs the
+// property body.
+// Spec functions (declared with `func`) are bound to implementation
+// code. If a predicate called that code, every decision to discard
+// or keep input values executes implementation code, which might
+// have side-effects. So, we guard against such predicates.
+func (c *checker) checkPredicateBody(body ast.Expr) {
+	if body == nil {
+		return
+	}
+
+	c.rejectSpecFuncCalls(body)
+}
+
+// rejectSpecFuncCalls walks an expression tree and reports an error
+// for each CallExpr that references a spec-declared function.
+func (c *checker) rejectSpecFuncCalls(expr ast.Expr) {
+	switch e := expr.(type) {
+	case *ast.CallExpr:
+		if s, ok := c.env[e.Func]; ok && s.kind == symbolFunc {
+			c.addError(e.Pos, "cannot call function %q in predicate body", e.Func)
+		}
+		for _, arg := range e.Args {
+			c.rejectSpecFuncCalls(arg)
+		}
+	case *ast.BinaryExpr:
+		c.rejectSpecFuncCalls(e.Left)
+		c.rejectSpecFuncCalls(e.Right)
+	case *ast.UnaryExpr:
+		c.rejectSpecFuncCalls(e.Operand)
+	case *ast.IsExpr:
+		c.rejectSpecFuncCalls(e.Expr)
+	case *ast.FieldAccessExpr:
+		c.rejectSpecFuncCalls(e.Object)
+	case *ast.TupleExpr:
+		for _, el := range e.Elements {
+			c.rejectSpecFuncCalls(el)
+		}
+	case *ast.IdentExpr, *ast.LiteralExpr:
+		// leaf nodes — nothing to check
+	}
 }
 
 func (c *checker) addError(pos ast.Position, format string, args ...any) {
