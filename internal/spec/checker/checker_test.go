@@ -604,3 +604,290 @@ func TestCheckPredicateAllowsPredicateCall(t *testing.T) {
 	// assert
 	require.Empty(t, errs)
 }
+
+func TestCheckPredicateBodyMustBeBool(t *testing.T) {
+	// arrange — body is int, not bool
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: int) { x + 1 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "predicate body must be a boolean expression")
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckPredicateBodyBoolPasses(t *testing.T) {
+	// arrange — body is bool
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: int) { x > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckPredicateParamAvailableInBody(t *testing.T) {
+	// arrange — param used in body resolves
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: int, y: int) { x + y > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckUndefinedIdentifierInExpression(t *testing.T) {
+	// arrange — y is not a param
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: int) { y > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "undefined identifier")
+	require.Contains(t, errs[0].Message, `"y"`)
+}
+
+func TestCheckArithmeticRequiresNumeric(t *testing.T) {
+	// arrange — string in arithmetic
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: string) { x + x > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "requires numeric operands")
+	require.Contains(t, errs[0].Message, `"string"`)
+}
+
+func TestCheckComparisonMismatchedTypes(t *testing.T) {
+	// arrange — int == string
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: int) { x == "hello" }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "requires matching types")
+	require.Contains(t, errs[0].Message, `"int"`)
+	require.Contains(t, errs[0].Message, `"string"`)
+}
+
+func TestCheckComparisonCrossNumericAllowed(t *testing.T) {
+	// arrange — uint compared with int literal
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: uint) { x > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckLogicalRequiresBool(t *testing.T) {
+	// arrange — int used with and
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: int) { x and true }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "requires bool operands")
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckUnaryNotRequiresBool(t *testing.T) {
+	// arrange — not applied to int
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: int) { not x }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "requires bool operand")
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckUnaryMinusRequiresNumeric(t *testing.T) {
+	// arrange — negate a bool
+	spec := parseValid(t, `spec "test" {
+                  predicate p(x: bool) { -x > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "requires numeric operand")
+	require.Contains(t, errs[0].Message, `"bool"`)
+}
+
+func TestCheckPropertyForallVarInScope(t *testing.T) {
+	// arrange — forall var used in assertion
+	spec := parseValid(t, `spec "test" {
+                  property p forall(x: int) { x > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckPropertyAssertionMustBeBool(t *testing.T) {
+	// arrange — assertion is int, not bool
+	spec := parseValid(t, `spec "test" {
+                  property p forall(x: int) { x + 1 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "property assertion must be a boolean expression")
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckPropertyLetBindingInScope(t *testing.T) {
+	// arrange — let binding used in later assertion
+	spec := parseValid(t, `spec "test" {
+                  property p forall(x: int) {
+                          let y = x + 1
+                          y > 0
+                  }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckPropertyUndefinedIdentifier(t *testing.T) {
+	// arrange — z not in scope
+	spec := parseValid(t, `spec "test" {
+                  property p forall(x: int) { z > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "undefined identifier")
+	require.Contains(t, errs[0].Message, `"z"`)
+}
+
+func TestCheckPropertyWhereClauseMustBeBool(t *testing.T) {
+	// arrange — where clause is int, not bool
+	spec := parseValid(t, `spec "test" {
+                  property p forall(x: int) where x + 1 { x > 0 }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "where clause must be a boolean expression")
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckPropertyForallVarTypeResolution(t *testing.T) {
+	// arrange — forall var references undefined type
+	spec := parseValid(t, `spec "test" {
+                  property p forall(x: Widget) { x == x }
+          }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "undefined type")
+	require.Contains(t, errs[0].Message, `"Widget"`)
+}
+
+func TestCheckPropertyRequireMustBeBool(t *testing.T) {
+	// arrange — require condition is int, not bool
+	spec := parseValid(t, `spec "test" {
+                    property p forall(x: int) {
+                            require x + 1
+                            x > 0
+                    }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "require condition must be a boolean expression")
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckArithmeticMismatchedNumericTypes(t *testing.T) {
+	// arrange — int + float is a type mismatch
+	spec := parseValid(t, `spec "test" {
+                    predicate p(x: int, y: float) { x + y > 0 }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "requires matching numeric types")
+	require.Contains(t, errs[0].Message, `"int"`)
+	require.Contains(t, errs[0].Message, `"float"`)
+}
+
+func TestCheckPropertyWhereRejectsSpecFuncCall(t *testing.T) {
+	// arrange — where clause calls a spec-declared function
+	spec := parseValid(t, `spec "test" {
+                    type Log
+                    func new_log() -> Log
+                    predicate valid(x: int) { x > 0 }
+                    property p forall(x: int) where new_log() is ok { x > 0 }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "cannot call function")
+	require.Contains(t, errs[0].Message, `"new_log"`)
+	require.Contains(t, errs[0].Message, "where clause")
+}
