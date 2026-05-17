@@ -9,11 +9,13 @@ const (
 	symbolFunc      symbolKind = "func"
 	symbolPredicate symbolKind = "predicate"
 	symbolProperty  symbolKind = "property"
+	symbolVar       symbolKind = "var"
 )
 
 type symbol struct {
-	kind symbolKind
-	pos  ast.Position
+	kind     symbolKind
+	typeName string
+	pos      ast.Position
 }
 
 // builtinTypes maps builtin type names to their arity.
@@ -29,4 +31,22 @@ var builtinTypes = map[string]int{
 	"set":    1,
 	"map":    2,
 	"option": 1,
+}
+
+// scope is a lexical scope mapping names to symbols.
+// Scopes form a chain: lookups check the current scope first,
+// then walk up to parent scopes.
+type scope struct {
+	symbols map[string]symbol
+	parent  *scope
+}
+
+func (s *scope) lookup(name string) (symbol, bool) {
+	if sym, ok := s.symbols[name]; ok {
+		return sym, true
+	}
+	if s.parent != nil {
+		return s.parent.lookup(name)
+	}
+	return symbol{}, false
 }
