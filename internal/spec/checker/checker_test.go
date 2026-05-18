@@ -556,7 +556,7 @@ func TestCheckPredicateRejectsSpecFuncCall(t *testing.T) {
 	_, errs := Check(spec)
 
 	// assert
-	require.Len(t, errs, 1)
+	require.Len(t, errs, 2)
 	require.Contains(t, errs[0].Message, "new_log")
 	require.Contains(t, errs[0].Message, "cannot call function")
 	require.Contains(t, errs[0].Message, "predicate body")
@@ -886,8 +886,247 @@ func TestCheckPropertyWhereRejectsSpecFuncCall(t *testing.T) {
 	_, errs := Check(spec)
 
 	// assert
-	require.Len(t, errs, 1)
+	require.Len(t, errs, 2)
 	require.Contains(t, errs[0].Message, "cannot call function")
 	require.Contains(t, errs[0].Message, `"new_log"`)
 	require.Contains(t, errs[0].Message, "where clause")
+}
+
+func TestCheckFuncCallValidArgs(t *testing.T) {
+	// arrange — func called with correct arg count and types
+	spec := parseValid(t, `spec "test" {
+                    type Log
+                    func new_log() -> Log
+                    func append(log: Log, value: bytes) -> (uint, error)
+                    property p forall(v: bytes) {
+                            let log = new_log()
+                            let (offset, err) = append(log, v)
+                            require err is ok
+                            offset == offset
+                    }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckFuncCallWrongArgCount(t *testing.T) {
+	// arrange — append expects 2 args, gets 1
+	spec := parseValid(t, `spec "test" {
+                    type Log
+                    func append(log: Log, value: bytes) -> (uint, error)
+                    property p forall(log: Log) {
+                            let result = append(log)
+                            result == result
+                    }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, `"append"`)
+	require.Contains(t, errs[0].Message, "expects 2 argument(s), got 1")
+}
+
+func TestCheckFuncCallWrongArgType(t *testing.T) {
+	// arrange — append expects (Log, bytes), gets (int, bytes)
+	spec := parseValid(t, `spec "test" {
+                    type Log
+                    func append(log: Log, value: bytes) -> (uint, error)
+                    property p forall(v: bytes) {
+                            let result = append(42, v)
+                            result == result
+                    }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "argument 1")
+	require.Contains(t, errs[0].Message, `"int"`)
+	require.Contains(t, errs[0].Message, `"Log"`)
+}
+
+func TestCheckIsOkOnNonErrorType(t *testing.T) {
+	// arrange — is ok applied to int
+	spec := parseValid(t, `spec "test" {
+                    predicate p(x: int) { x is ok }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "is ok")
+	require.Contains(t, errs[0].Message, "error type")
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckIsErrorOnErrorType(t *testing.T) {
+	// arrange — is error applied to error type passes
+	spec := parseValid(t, `spec "test" {
+                    predicate p(e: error) { e is error }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckFieldAccessOnNonStructType(t *testing.T) {
+	// arrange — field access on int
+	spec := parseValid(t, `spec "test" {
+                    predicate p(x: int) { x.field > 0 }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "field access on non-struct type")
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckFieldAccessOnStructValidField(t *testing.T) {
+	// arrange — field access on struct with valid field
+	spec := parseValid(t, `spec "test" {
+                    type Entry {
+                            offset: uint,
+                            data: bytes
+                    }
+                    predicate p(e: Entry) { e.offset > 0 }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckFieldAccessOnStructUnknownField(t *testing.T) {
+	// arrange — field access on struct with nonexistent field
+	spec := parseValid(t, `spec "test" {
+                    type Entry {
+                            offset: uint
+                    }
+                    predicate p(e: Entry) { e.missing > 0 }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, `"Entry"`)
+	require.Contains(t, errs[0].Message, `"missing"`)
+	require.Contains(t, errs[0].Message, "has no field")
+}
+
+func TestCheckPredicateCallValidArgs(t *testing.T) {
+	// arrange — predicate called with correct args in where clause
+	spec := parseValid(t, `spec "test" {
+                    predicate positive(x: int) { x > 0 }
+                    property p forall(a: int) where positive(a) { a == a }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckPredicateCallWrongArgType(t *testing.T) {
+	// arrange — predicate expects int, gets string
+	spec := parseValid(t, `spec "test" {
+                    predicate positive(x: int) { x > 0 }
+                    property p forall(s: string) where positive(s) { s == s }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "argument 1")
+	require.Contains(t, errs[0].Message, `"string"`)
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckTupleExprInfersType(t *testing.T) {
+	// arrange — tuple of (int, bool) compared with itself
+	spec := parseValid(t, `spec "test" {
+                    property p forall(x: int) {
+                            (x, true) == (x, true)
+                    }
+            }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckIsOkOnTupleWithError(t *testing.T) {
+	// arrange — is ok applied to single-name let with (uint, error) return
+	spec := parseValid(t, `spec "test" {
+                      type Log
+                      func append(log: Log, value: bytes) -> (uint, error)
+                      property p forall(log: Log, v: bytes) {
+                              let result = append(log, v)
+                              require result is ok
+                              true
+                      }
+              }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckUndefinedFunctionCall(t *testing.T) {
+	// arrange — call to undeclared, non-builtin function
+	spec := parseValid(t, `spec "test" {
+                      predicate p(x: int) { foo(x) > 0 }
+              }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "undefined function")
+	require.Contains(t, errs[0].Message, `"foo"`)
+}
+
+func TestCheckCallNonCallable(t *testing.T) {
+	// arrange — calling a type name is not allowed
+	spec := parseValid(t, `spec "test" {
+                      type Log
+                      predicate p(x: int) { Log(x) > 0 }
+              }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "may not call")
+	require.Contains(t, errs[0].Message, "type")
+	require.Contains(t, errs[0].Message, `"Log"`)
 }

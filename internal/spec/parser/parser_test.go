@@ -1541,3 +1541,48 @@ func TestParsePropertyShapeContractualVsSequential(t *testing.T) {
 	require.Equal(t, "read_after_write", raw.Name)
 	require.Equal(t, ast.Sequential, raw.Shape)
 }
+
+func TestParseTupleExpr(t *testing.T) {
+	// arrange
+	source := `spec "test" {                                                                                                                      
+                  predicate p(x: int) { (x, true) == (x, false) }                                                                                     
+          }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+	pd := spec.Declarations[0].(*ast.PredicateDecl)
+
+	eq := pd.Body.(*ast.BinaryExpr)
+	require.Equal(t, "==", eq.Op)
+
+	left := eq.Left.(*ast.TupleExpr)
+	require.Len(t, left.Elements, 2)
+	require.Equal(t, "x", left.Elements[0].(*ast.IdentExpr).Name)
+	require.Equal(t, "true", left.Elements[1].(*ast.LiteralExpr).Value)
+
+	right := eq.Right.(*ast.TupleExpr)
+	require.Len(t, right.Elements, 2)
+	require.Equal(t, "x", right.Elements[0].(*ast.IdentExpr).Name)
+	require.Equal(t, "false", right.Elements[1].(*ast.LiteralExpr).Value)
+}
+
+func TestParseTupleExprTrailingComma(t *testing.T) {
+	// arrange
+	source := `spec "test" {
+                  predicate p(x: int, y: int) { (x, y,) == (x, y,) }
+          }`
+
+	// act
+	spec, errs := Parse(source, "test.assay")
+
+	// assert
+	require.Empty(t, errs)
+	pd := spec.Declarations[0].(*ast.PredicateDecl)
+
+	eq := pd.Body.(*ast.BinaryExpr)
+	left := eq.Left.(*ast.TupleExpr)
+	require.Len(t, left.Elements, 2)
+}

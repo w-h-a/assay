@@ -720,8 +720,20 @@ func (p *parser) parseAtom() ast.Expr {
 	case lexer.LPAREN:
 		p.advance()
 		expr := p.parseExpr(precOr)
+		if !p.at(lexer.COMMA) {
+			p.expect(lexer.RPAREN)
+			return expr
+		}
+		elements := []ast.Expr{expr}
+		for p.at(lexer.COMMA) {
+			p.advance() // consume COMMA
+			if p.at(lexer.RPAREN) {
+				break
+			}
+			elements = append(elements, p.parseExpr(precOr))
+		}
 		p.expect(lexer.RPAREN)
-		return expr
+		return &ast.TupleExpr{Elements: elements, Pos: astPos(tok)}
 	default:
 		p.addError(tok, "expected expression, got %s", tok.Kind)
 		if !p.at(lexer.RPAREN) && !p.at(lexer.RBRACE) && !p.at(lexer.RBRACKET) && !p.at(lexer.COMMA) {

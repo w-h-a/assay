@@ -15,6 +15,7 @@ const (
 type symbol struct {
 	kind     symbolKind
 	typeName string
+	decl     ast.Decl
 	pos      ast.Position
 }
 
@@ -31,6 +32,11 @@ var builtinTypes = map[string]int{
 	"set":    1,
 	"map":    2,
 	"option": 1,
+}
+
+// builtinFuncs maps builtin function names to their return types.
+var builtinFuncs = map[string]string{
+	"len": "int",
 }
 
 // scope is a lexical scope mapping names to symbols.
