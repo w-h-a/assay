@@ -2,6 +2,7 @@ package checker
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/w-h-a/assay/internal/spec/ast"
 )
@@ -53,13 +54,13 @@ func (c *checker) registerDeclarations(decls []ast.Decl) {
 	for _, d := range decls {
 		switch d := d.(type) {
 		case *ast.TypeDecl:
-			c.define(d.Name, symbolType, "", d.Pos)
+			c.define(d.Name, symbolType, "", d, d.Pos)
 		case *ast.FuncDecl:
-			c.define(d.Name, symbolFunc, "", d.Pos)
+			c.define(d.Name, symbolFunc, "", d, d.Pos)
 		case *ast.PredicateDecl:
-			c.define(d.Name, symbolPredicate, "", d.Pos)
+			c.define(d.Name, symbolPredicate, "", d, d.Pos)
 		case *ast.PropertyDecl:
-			c.define(d.Name, symbolProperty, "", d.Pos)
+			c.define(d.Name, symbolProperty, "", d, d.Pos)
 		}
 	}
 }
@@ -67,7 +68,7 @@ func (c *checker) registerDeclarations(decls []ast.Decl) {
 // define registers a name in the current scope. If the name is already
 // defined, it reports a duplicate error pointing at the new declaration
 // and referencing the original
-func (c *checker) define(name string, kind symbolKind, typeName string, pos ast.Position) {
+func (c *checker) define(name string, kind symbolKind, typeName string, decl ast.Decl, pos ast.Position) {
 	if name == "" {
 		return
 	}
@@ -77,7 +78,7 @@ func (c *checker) define(name string, kind symbolKind, typeName string, pos ast.
 		return
 	}
 
-	c.scope.symbols[name] = symbol{kind: kind, typeName: typeName, pos: pos}
+	c.scope.symbols[name] = symbol{kind: kind, typeName: typeName, decl: decl, pos: pos}
 }
 
 // resolveDeclarations walks declarations and checks that all type
@@ -170,7 +171,7 @@ func (c *checker) checkPredicateBody(decl *ast.PredicateDecl) {
 	defer c.popScope()
 
 	for _, p := range decl.Params {
-		c.define(p.Name, symbolVar, c.resolvedTypeName(p.Type), p.Pos)
+		c.define(p.Name, symbolVar, c.resolvedTypeName(p.Type), nil, p.Pos)
 	}
 
 	c.rejectSpecFuncCalls(decl.Body, "predicate body")
@@ -192,7 +193,7 @@ func (c *checker) checkPropertyBody(decl *ast.PropertyDecl) {
 	defer c.popScope()
 
 	for _, v := range decl.Forall.Vars {
-		c.define(v.Name, symbolVar, c.resolvedTypeName(v.Type), v.Pos)
+		c.define(v.Name, symbolVar, c.resolvedTypeName(v.Type), nil, v.Pos)
 	}
 
 	if decl.Where != nil {
@@ -214,12 +215,12 @@ func (c *checker) checkStmt(stmt ast.Stmt) {
 		rhsType := c.inferType(s.Expr)
 		if len(s.Names) == 1 {
 			if s.Names[0] != "_" {
-				c.define(s.Names[0], symbolVar, rhsType, s.Pos)
+				c.define(s.Names[0], symbolVar, rhsType, nil, s.Pos)
 			}
 		} else {
 			for _, name := range s.Names {
 				if name != "_" {
-					c.define(name, symbolVar, "", s.Pos)
+					c.define(name, symbolVar, "", nil, s.Pos)
 				}
 			}
 		}
@@ -304,21 +305,73 @@ func (c *checker) inferType(expr ast.Expr) string {
 	case *ast.UnaryExpr:
 		return c.inferUnaryType(e)
 	case *ast.IsExpr:
-		c.inferType(e.Expr)
+		operandType := c.inferType(e.Expr)
+		if operandType != "" && !includesError(operandType) {
+			c.addError(e.Pos, "'is %s' requires operand with error type, got %q", e.Target, operandType)
+		}
 		return "bool"
 	case *ast.CallExpr:
-		for _, arg := range e.Args {
-			c.inferType(arg)
+		argTypes := make([]string, len(e.Args))
+		for i, arg := range e.Args {
+			argTypes[i] = c.inferType(arg)
 		}
-		return ""
+
+		sym, ok := c.scope.lookup(e.Func)
+		if !ok {
+			if retType, builtin := builtinFuncs[e.Func]; builtin {
+				return retType
+			}
+			c.addError(e.Pos, "undefined function %q", e.Func)
+			return ""
+		}
+
+		switch sym.kind {
+		case symbolFunc:
+			fd := sym.decl.(*ast.FuncDecl)
+			if !c.checkCallArgs(e.Pos, e.Func, argTypes, fd.Params) {
+				return ""
+			}
+			return c.funcReturnType(fd)
+		case symbolPredicate:
+			pd := sym.decl.(*ast.PredicateDecl)
+			c.checkCallArgs(e.Pos, e.Func, argTypes, pd.Params)
+			return "bool"
+		default:
+			c.addError(e.Pos, "may not call %s %q", sym.kind, e.Func)
+			return ""
+		}
 	case *ast.FieldAccessExpr:
-		c.inferType(e.Object)
+		objectType := c.inferType(e.Object)
+		if objectType == "" {
+			return ""
+		}
+		sym, ok := c.scope.lookup(objectType)
+		if !ok || sym.kind != symbolType {
+			c.addError(e.Pos, "field access on non-struct type %q", objectType)
+			return ""
+		}
+		td := sym.decl.(*ast.TypeDecl)
+		for _, f := range td.Fields {
+			if f.Name == e.Field {
+				return c.resolvedTypeName(f.Type)
+			}
+		}
+		c.addError(e.Pos, "type %q has no field %q", objectType, e.Field)
 		return ""
 	case *ast.TupleExpr:
-		for _, el := range e.Elements {
-			c.inferType(el)
+		parts := make([]string, len(e.Elements))
+		allKnown := true
+		for i, el := range e.Elements {
+			resolved := c.inferType(el)
+			if resolved == "" {
+				allKnown = false
+			}
+			parts[i] = resolved
 		}
-		return ""
+		if !allKnown {
+			return ""
+		}
+		return "(" + strings.Join(parts, ", ") + ")"
 	default:
 		return ""
 	}
@@ -384,6 +437,42 @@ func (c *checker) inferUnaryType(e *ast.UnaryExpr) string {
 	default:
 		return ""
 	}
+}
+
+// checkCallArgs validates argument count and types against parameters.
+// Returns false if the argument count is wrong.
+func (c *checker) checkCallArgs(pos ast.Position, name string, argTypes []string, params []ast.Param) bool {
+	if len(argTypes) != len(params) {
+		c.addError(pos, "%q expects %d argument(s), got %d", name, len(params), len(argTypes))
+		return false
+	}
+	for i, argType := range argTypes {
+		paramType := c.resolvedTypeName(params[i].Type)
+		if argType != "" && paramType != "" && argType != paramType {
+			c.addError(pos, "argument %d to %q has type %q, expected %q", i+1, name, argType, paramType)
+		}
+	}
+	return true
+}
+
+// funcReturnType computes the return type for a function declaration.
+// Multiple returns are represented as a tuple type string.
+func (c *checker) funcReturnType(fd *ast.FuncDecl) string {
+	if len(fd.Returns) == 0 {
+		return ""
+	}
+	if len(fd.Returns) == 1 {
+		return c.resolvedTypeName(fd.Returns[0])
+	}
+	parts := make([]string, len(fd.Returns))
+	for i, r := range fd.Returns {
+		resolved := c.resolvedTypeName(r)
+		if resolved == "" {
+			return ""
+		}
+		parts[i] = resolved
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
 }
 
 func (c *checker) addError(pos ast.Position, format string, args ...any) {
