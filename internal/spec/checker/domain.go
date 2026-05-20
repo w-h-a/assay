@@ -39,6 +39,15 @@ var builtinFuncs = map[string]string{
 	"len": "int",
 }
 
+// builtinGenerators maps builtin generator names to their expected variable types.
+var builtinGenerators = map[string]string{
+	"ints":    "int",
+	"uints":   "uint",
+	"floats":  "float",
+	"strings": "string",
+	"bytes":   "bytes",
+}
+
 // scope is a lexical scope mapping names to symbols.
 // Scopes form a chain: lookups check the current scope first,
 // then walk up to parent scopes.

@@ -193,7 +193,9 @@ func (c *checker) checkPropertyBody(decl *ast.PropertyDecl) {
 	defer c.popScope()
 
 	for _, v := range decl.Forall.Vars {
-		c.define(v.Name, symbolVar, c.resolvedTypeName(v.Type), nil, v.Pos)
+		varType := c.resolvedTypeName(v.Type)
+		c.define(v.Name, symbolVar, varType, nil, v.Pos)
+		c.checkGeneratorConstraint(varType, v.Generator)
 	}
 
 	if decl.Where != nil {
@@ -217,12 +219,24 @@ func (c *checker) checkStmt(stmt ast.Stmt) {
 			if s.Names[0] != "_" {
 				c.define(s.Names[0], symbolVar, rhsType, nil, s.Pos)
 			}
-		} else {
-			for _, name := range s.Names {
-				if name != "_" {
-					c.define(name, symbolVar, "", nil, s.Pos)
-				}
+			return
+		}
+
+		elements := parseTupleElements(rhsType)
+		if rhsType != "" && elements == nil {
+			c.addError(s.Pos, "cannot destructure non-tuple type %q", rhsType)
+		} else if elements != nil && len(s.Names) != len(elements) {
+			c.addError(s.Pos, "tuple destructure has %d name(s), but expression has %d element(s)", len(s.Names), len(elements))
+		}
+		for i, name := range s.Names {
+			if name == "_" {
+				continue
 			}
+			elemType := ""
+			if elements != nil && i < len(elements) {
+				elemType = elements[i]
+			}
+			c.define(name, symbolVar, elemType, nil, s.Pos)
 		}
 	case *ast.RequireStmt:
 		reqType := c.inferType(s.Expr)
@@ -233,6 +247,43 @@ func (c *checker) checkStmt(stmt ast.Stmt) {
 		assertType := c.inferType(s.Expr)
 		if assertType != "" && assertType != "bool" {
 			c.addError(s.Pos, "property assertion must be a boolean expression, got %q", assertType)
+		}
+	}
+}
+
+func (c *checker) checkGeneratorConstraint(varType string, gen ast.GeneratorConstraint) {
+	if gen == nil || varType == "" {
+		return
+	}
+
+	switch g := gen.(type) {
+	case *ast.RangeGen:
+		if varType != "int" && varType != "uint" {
+			c.addError(g.Pos, "range generator requires int or uint variable, got %q", varType)
+		}
+		loType := c.inferType(g.Lo)
+		if loType != "" && !isNumeric(loType) {
+			c.addError(g.Pos, "range bound must be numeric, got %q", loType)
+		}
+		hiType := c.inferType(g.Hi)
+		if hiType != "" && !isNumeric(hiType) {
+			c.addError(g.Pos, "range bound must be numeric, got %q", hiType)
+		}
+	case *ast.BuiltinGen:
+		expected, ok := builtinGenerators[g.Name]
+		if !ok {
+			c.addError(g.Pos, "unknown builtin generator %q", g.Name)
+			return
+		}
+		if varType != expected {
+			c.addError(g.Pos, "generator %q produces %q values, but variable has type %q", g.Name, expected, varType)
+		}
+	case *ast.OneOfGen:
+		for _, val := range g.Values {
+			valType := c.inferType(val)
+			if valType != "" && valType != varType {
+				c.addError(g.Pos, "one_of value has type %q, but variable has type %q", valType, varType)
+			}
 		}
 	}
 }

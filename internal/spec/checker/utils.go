@@ -54,3 +54,28 @@ func includesError(typeName string) bool {
 	}
 	return strings.TrimSpace(inner[start:]) == "error"
 }
+
+func parseTupleElements(typeName string) []string {
+	if len(typeName) < 3 || typeName[0] != '(' || typeName[len(typeName)-1] != ')' {
+		return nil
+	}
+	inner := typeName[1 : len(typeName)-1]
+	var elements []string
+	depth := 0
+	start := 0
+	for i := 0; i < len(inner); i++ {
+		switch inner[i] {
+		case '[', '(':
+			depth++
+		case ']', ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				elements = append(elements, strings.TrimSpace(inner[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	elements = append(elements, strings.TrimSpace(inner[start:]))
+	return elements
+}

@@ -1130,3 +1130,279 @@ func TestCheckCallNonCallable(t *testing.T) {
 	require.Contains(t, errs[0].Message, "type")
 	require.Contains(t, errs[0].Message, `"Log"`)
 }
+
+func TestCheckFullMathSpec(t *testing.T) {
+	// arrange
+	spec := parseValid(t, `spec "math" {
+                func add(a: int, b: int) -> int
+
+                property commutative forall(a: int, b: int) {
+                        add(a, b) == add(b, a)
+                }
+
+                property identity forall(a: int) {
+                        add(a, 0) == a
+                }
+        }`)
+
+	// act
+	validated, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+	require.Equal(t, spec, validated.Spec)
+}
+
+func TestCheckPropertyLetUseBeforeDefine(t *testing.T) {
+	// arrange — z is used before it is defined by a later let binding
+	spec := parseValid(t, `spec "test" {
+                property p forall(x: int) {
+                        let y = z + 1
+                        let z = x + 1
+                        y > 0
+                }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "undefined identifier")
+	require.Contains(t, errs[0].Message, `"z"`)
+}
+
+func TestCheckPropertyLetNameCollisionWithForall(t *testing.T) {
+	// arrange — let binding reuses a forall var name
+	spec := parseValid(t, `spec "test" {
+                property p forall(x: int) {
+                        let x = 1
+                        x > 0
+                }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, `"x"`)
+	require.Contains(t, errs[0].Message, "already declared")
+}
+
+func TestCheckPropertyLetNameCollisionBetweenBindings(t *testing.T) {
+	// arrange — two let bindings with the same name
+	spec := parseValid(t, `spec "test" {
+                property p forall(a: int) {
+                        let x = a + 1
+                        let x = a + 2
+                        x > 0
+                }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, `"x"`)
+	require.Contains(t, errs[0].Message, "already declared")
+}
+
+func TestCheckRangeGenOnNonIntegerType(t *testing.T) {
+	// arrange — range generator on string variable
+	spec := parseValid(t, `spec "test" {
+                property p forall(s: string in 1..100) { s == s }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "range generator requires int or uint")
+	require.Contains(t, errs[0].Message, `"string"`)
+}
+
+func TestCheckRangeGenOnFloatType(t *testing.T) {
+	// arrange — range generator on float variable
+	spec := parseValid(t, `spec "test" {
+                property p forall(x: float in 1..100) { x == x }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "range generator requires int or uint")
+	require.Contains(t, errs[0].Message, `"float"`)
+}
+
+func TestCheckValidRangeGen(t *testing.T) {
+	// arrange — range generator on int and uint
+	spec := parseValid(t, `spec "test" {
+                property p forall(a: int in 1..100, b: uint in 0..50) {
+                        a > 0 and b == b
+                }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckBuiltinGenTypeMismatch(t *testing.T) {
+	// arrange — strings generator on int variable
+	spec := parseValid(t, `spec "test" {
+                property p forall(n: int in strings(1, 50)) { n > 0 }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, `"strings"`)
+	require.Contains(t, errs[0].Message, `"string"`)
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckUnknownBuiltinGenerator(t *testing.T) {
+	// arrange — unknown generator name
+	spec := parseValid(t, `spec "test" {
+                property p forall(n: int in foos(1, 50)) { n > 0 }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "unknown builtin generator")
+	require.Contains(t, errs[0].Message, `"foos"`)
+}
+
+func TestCheckValidBuiltinGen(t *testing.T) {
+	// arrange — strings generator on string variable
+	spec := parseValid(t, `spec "test" {
+                property p forall(s: string in strings(1, 50)) { s == s }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckOneOfGenTypeMismatch(t *testing.T) {
+	// arrange — one_of with string values on int variable
+	spec := parseValid(t, `spec "test" {
+                property p forall(n: int in one_of("a", "b")) { n > 0 }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 2)
+	require.Contains(t, errs[0].Message, "one_of value has type")
+	require.Contains(t, errs[0].Message, `"string"`)
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckValidOneOfGen(t *testing.T) {
+	// arrange — one_of with matching int values
+	spec := parseValid(t, `spec "test" {
+                property p forall(n: int in one_of(1, 2, 3)) { n > 0 }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckTupleDestructureArityMismatch(t *testing.T) {
+	// arrange — 3 names for a 2-element tuple
+	spec := parseValid(t, `spec "test" {
+                type Log
+                func append(log: Log, value: bytes) -> (uint, error)
+                property p forall(log: Log, v: bytes) {
+                        let (a, b, c) = append(log, v)
+                        a == a
+                }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "tuple destructure has 3 name(s)")
+	require.Contains(t, errs[0].Message, "2 element(s)")
+}
+
+func TestCheckTupleDestructureNonTuple(t *testing.T) {
+	// arrange — destructure a non-tuple return
+	spec := parseValid(t, `spec "test" {
+                func compute(x: int) -> int
+                property p forall(x: int) {
+                        let (a, b) = compute(x)
+                        a == a
+                }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "cannot destructure non-tuple type")
+	require.Contains(t, errs[0].Message, `"int"`)
+}
+
+func TestCheckTupleDestructureTypePropagation(t *testing.T) {
+	// arrange — destructured names carry element types into subsequent stmts
+	spec := parseValid(t, `spec "test" {
+                type Log
+                func append(log: Log, value: bytes) -> (uint, error)
+                property p forall(log: Log, v: bytes) {
+                        let (offset, err) = append(log, v)
+                        require err is ok
+                        offset > 0
+                }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Empty(t, errs)
+}
+
+func TestCheckTupleDestructureTypeMismatchDetected(t *testing.T) {
+	// arrange — use destructured uint name in a string comparison
+	spec := parseValid(t, `spec "test" {
+                type Log
+                func append(log: Log, value: bytes) -> (uint, error)
+                property p forall(log: Log, v: bytes) {
+                        let (offset, err) = append(log, v)
+                        require err is ok
+                        offset == "hello"
+                }
+        }`)
+
+	// act
+	_, errs := Check(spec)
+
+	// assert
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Message, "requires matching types")
+	require.Contains(t, errs[0].Message, `"uint"`)
+	require.Contains(t, errs[0].Message, `"string"`)
+}
