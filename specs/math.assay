@@ -1,0 +1,11 @@
+spec "math" {
+	func add(a: int, b: int) -> int
+
+	property commutative forall(a: int, b: int) {
+		add(a, b) == add(b, a)
+	}
+
+	property identity forall(a: int) {
+		add(a, 0) == a
+	}
+}
