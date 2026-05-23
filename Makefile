@@ -1,4 +1,4 @@
-.PHONY: tidy style test unit-test build
+.PHONY: tidy style test unit-test build install
 
 tidy:
 	go mod tidy
@@ -16,3 +16,6 @@ unit-test:
 
 build:
 	CGO_ENABLED=0 go build -o bin/assay ./cmd/assay
+
+install:
+	go install ./cmd/assay
