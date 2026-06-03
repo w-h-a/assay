@@ -6,7 +6,7 @@ import "fmt"
 type TokenKind int
 
 func (k TokenKind) String() string {
-	if int(k) < len(kindNames) {
+	if k >= 0 && int(k) < len(kindNames) {
 		return kindNames[k]
 	}
 	return fmt.Sprintf("TokenKind(%d)", k)
@@ -43,11 +43,6 @@ const (
 	IN
 	TRUE
 	FALSE
-
-	// Keywords — binding language
-	BIND
-	TARGET
-	PACKAGE
 
 	// Keywords — type names
 	BOOL
@@ -116,9 +111,6 @@ var kindNames = [...]string{
 	IN:         "in",
 	TRUE:       "true",
 	FALSE:      "false",
-	BIND:       "bind",
-	TARGET:     "target",
-	PACKAGE:    "package",
 	BOOL:       "bool",
 	INT:        "int",
 	UINT:       "uint",
@@ -175,9 +167,6 @@ var keywords = map[string]TokenKind{
 	"in":        IN,
 	"true":      TRUE,
 	"false":     FALSE,
-	"bind":      BIND,
-	"target":    TARGET,
-	"package":   PACKAGE,
 	"bool":      BOOL,
 	"int":       INT,
 	"uint":      UINT,

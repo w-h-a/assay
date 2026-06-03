@@ -42,9 +42,6 @@ func TestNextTokenKeywords(t *testing.T) {
 		{"in", IN},
 		{"true", TRUE},
 		{"false", FALSE},
-		{"bind", BIND},
-		{"target", TARGET},
-		{"package", PACKAGE},
 		{"bool", BOOL},
 		{"int", INT},
 		{"uint", UINT},
@@ -92,7 +89,10 @@ func TestNextTokenIdentifiers(t *testing.T) {
 		{"Spec", "Spec", IDENT},     // capitalized — not a keyword
 		{"FORALL", "FORALL", IDENT}, // uppercase — not a keyword
 		{"a_b_c", "a_b_c", IDENT},
-		{"_", "_", UNDERSCORE}, // lone underscore is UNDERSCORE, not IDENT
+		{"_", "_", UNDERSCORE},        // lone underscore is UNDERSCORE, not IDENT
+		{"bind", "bind", IDENT},       // owned by binding lexer, not a spec keyword
+		{"target", "target", IDENT},   // owned by binding lexer, not a spec keyword
+		{"package", "package", IDENT}, // owned by binding lexer, not a spec keyword
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -165,15 +165,26 @@ func TestNextTokenUnterminatedString(t *testing.T) {
 }
 
 func TestNextTokenInvalidEscape(t *testing.T) {
-	// arrange
-	l := New(`"hello\x"`, "test.assay")
+	// arrange — a bad escape followed by trailing source. The scanner should
+	// consume the entire string literal and leave the cursor positioned to
+	// lex the trailing identifier cleanly (no cascade).
+	l := New(`"hello\x world" foo`, "test.assay")
 
 	// act
 	tok := l.NextToken()
 
 	// assert
 	require.Equal(t, ILLEGAL, tok.Kind)
+	require.Equal(t, `"hello\x world"`, tok.Literal, "ILLEGAL spans the entire malformed literal")
+	require.Equal(t, 1, tok.Pos.Line)
 	require.Equal(t, 1, tok.Pos.Column)
+
+	// act — scanner should have parked just after the closing quote
+	next := l.NextToken()
+
+	// assert
+	require.Equal(t, IDENT, next.Kind)
+	require.Equal(t, "foo", next.Literal)
 }
 
 func TestNextTokenNumericLiterals(t *testing.T) {
@@ -857,12 +868,14 @@ func TestLookupKeyword(t *testing.T) {
 		{"spec", SPEC},
 		{"forall", FORALL},
 		{"true", TRUE},
-		{"bind", BIND},
 		{"int", INT},
 		{"option", OPTION},
 		{"myVar", IDENT},
-		{"Spec", IDENT},   // case-sensitive
-		{"FORALL", IDENT}, // case-sensitive
+		{"Spec", IDENT},    // case-sensitive
+		{"FORALL", IDENT},  // case-sensitive
+		{"bind", IDENT},    // owned by binding lexer
+		{"target", IDENT},  // owned by binding lexer
+		{"package", IDENT}, // owned by binding lexer
 	}
 	for _, tt := range tests {
 		t.Run(tt.word, func(t *testing.T) {
