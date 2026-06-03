@@ -2,7 +2,7 @@ package lexer
 
 import "github.com/w-h-a/assay/internal/util/is"
 
-// Lexer performs lexical analysis on .assay source text.
+// Lexer performs lexical analysis on .bind source text.
 type Lexer struct {
 	source string
 	file   string
@@ -48,79 +48,19 @@ func (l *Lexer) NextToken() Token {
 	ch := l.advance()
 
 	switch ch {
-	case '(':
-		return Token{Kind: LPAREN, Literal: "(", Pos: pos}
-	case ')':
-		return Token{Kind: RPAREN, Literal: ")", Pos: pos}
 	case '{':
 		return Token{Kind: LBRACE, Literal: "{", Pos: pos}
 	case '}':
 		return Token{Kind: RBRACE, Literal: "}", Pos: pos}
-	case '[':
-		return Token{Kind: LBRACKET, Literal: "[", Pos: pos}
-	case ']':
-		return Token{Kind: RBRACKET, Literal: "]", Pos: pos}
-	case ',':
-		return Token{Kind: COMMA, Literal: ",", Pos: pos}
-	case ':':
-		return Token{Kind: COLON, Literal: ":", Pos: pos}
-	case '+':
-		return Token{Kind: PLUS, Literal: "+", Pos: pos}
-	case '*':
-		return Token{Kind: STAR, Literal: "*", Pos: pos}
-	case '/':
-		return Token{Kind: SLASH, Literal: "/", Pos: pos}
-	case '%':
-		return Token{Kind: PERCENT, Literal: "%", Pos: pos}
 	case '=':
-		if l.peek() == '=' {
-			l.advance()
-			return Token{Kind: EQ, Literal: "==", Pos: pos}
-		}
 		return Token{Kind: ASSIGN, Literal: "=", Pos: pos}
-	case '!':
-		if l.peek() == '=' {
-			l.advance()
-			return Token{Kind: NEQ, Literal: "!=", Pos: pos}
-		}
-		return Token{Kind: ILLEGAL, Literal: "!", Pos: pos}
-	case '<':
-		if l.peek() == '=' {
-			l.advance()
-			return Token{Kind: LTE, Literal: "<=", Pos: pos}
-		}
-		return Token{Kind: LT, Literal: "<", Pos: pos}
-	case '>':
-		if l.peek() == '=' {
-			l.advance()
-			return Token{Kind: GTE, Literal: ">=", Pos: pos}
-		}
-		return Token{Kind: GT, Literal: ">", Pos: pos}
-	case '-':
-		if l.peek() == '>' {
-			l.advance()
-			return Token{Kind: ARROW, Literal: "->", Pos: pos}
-		}
-		return Token{Kind: MINUS, Literal: "-", Pos: pos}
 	case '.':
-		if l.peek() == '.' {
-			l.advance()
-			return Token{Kind: DOTDOT, Literal: "..", Pos: pos}
-		}
 		return Token{Kind: DOT, Literal: ".", Pos: pos}
-	case '_':
-		if is.Alphanumeric(l.peek()) {
-			return l.scanIdentifier(pos)
-		}
-		return Token{Kind: UNDERSCORE, Literal: "_", Pos: pos}
 	case '"':
 		return l.scanString(pos)
 	default:
-		if is.Letter(ch) {
+		if is.Letter(ch) || ch == '_' {
 			return l.scanIdentifier(pos)
-		}
-		if is.Digit(ch) {
-			return l.scanNumber(pos)
 		}
 		return Token{Kind: ILLEGAL, Literal: string(ch), Pos: pos}
 	}
@@ -147,23 +87,6 @@ func (l *Lexer) scanIdentifier(pos Position) Token {
 	return Token{Kind: LookupKeyword(literal), Literal: literal, Pos: pos}
 }
 
-// scanNumber reads the rest of an integer or float literal.
-// The first digit has already been consumed.
-func (l *Lexer) scanNumber(pos Position) Token {
-	start := l.pos - 1
-	for is.Digit(l.peek()) {
-		l.advance()
-	}
-	if l.peek() == '.' && l.pos < len(l.source)-1 && is.Digit(l.source[l.pos+1]) {
-		l.advance() // consume '.'
-		for is.Digit(l.peek()) {
-			l.advance()
-		}
-		return Token{Kind: FLOAT_LIT, Literal: l.source[start:l.pos], Pos: pos}
-	}
-	return Token{Kind: INT_LIT, Literal: l.source[start:l.pos], Pos: pos}
-}
-
 // scanString reads a double-quoted string literal.
 // The opening quote has already been consumed. On an invalid escape, the
 // scanner consumes the rest of the literal so one bad string produces one
@@ -175,12 +98,12 @@ func (l *Lexer) scanString(pos Position) Token {
 	for !l.isAtEnd() {
 		ch := l.advance()
 		switch ch {
-		case '"': // end quote case
+		case '"':
 			if hasError {
 				return Token{Kind: ILLEGAL, Literal: l.source[start:l.pos], Pos: pos}
 			}
 			return Token{Kind: STRING_LIT, Literal: string(buf), Pos: pos}
-		case '\\': // single backslash case
+		case '\\':
 			if l.isAtEnd() {
 				return Token{Kind: ILLEGAL, Literal: l.source[start:l.pos], Pos: pos}
 			}
@@ -197,7 +120,7 @@ func (l *Lexer) scanString(pos Position) Token {
 			default:
 				hasError = true
 			}
-		case '\n': // illegal new line case
+		case '\n':
 			return Token{Kind: ILLEGAL, Literal: l.source[start : l.pos-1], Pos: pos}
 		default:
 			buf = append(buf, ch)
@@ -233,7 +156,7 @@ func (l *Lexer) advance() byte {
 }
 
 // skipWhitespace advances past spaces, tabs, carriage returns, newlines,
-// and line comments (// to end of line)
+// and line comments (// to end of line).
 func (l *Lexer) skipWhitespace() {
 	for !l.isAtEnd() {
 		switch l.peek() {
