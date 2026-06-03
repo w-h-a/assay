@@ -1,5 +1,7 @@
 package lexer
 
+import "github.com/w-h-a/assay/internal/util/is"
+
 // Lexer performs lexical analysis on .assay source text.
 type Lexer struct {
 	source string
@@ -107,17 +109,17 @@ func (l *Lexer) NextToken() Token {
 		}
 		return Token{Kind: DOT, Literal: ".", Pos: pos}
 	case '_':
-		if isAlphanumeric(l.peek()) {
+		if is.Alphanumeric(l.peek()) {
 			return l.scanIdentifier(pos)
 		}
 		return Token{Kind: UNDERSCORE, Literal: "_", Pos: pos}
 	case '"':
 		return l.scanString(pos)
 	default:
-		if isLetter(ch) {
+		if is.Letter(ch) {
 			return l.scanIdentifier(pos)
 		}
-		if isDigit(ch) {
+		if is.Digit(ch) {
 			return l.scanNumber(pos)
 		}
 		return Token{Kind: ILLEGAL, Literal: string(ch), Pos: pos}
@@ -138,7 +140,7 @@ func (l *Lexer) Position() Position {
 // The first character (letter or underscore) has already been consumed.
 func (l *Lexer) scanIdentifier(pos Position) Token {
 	start := l.pos - 1
-	for isAlphanumeric(l.peek()) {
+	for is.Alphanumeric(l.peek()) {
 		l.advance()
 	}
 	literal := l.source[start:l.pos]
@@ -149,12 +151,12 @@ func (l *Lexer) scanIdentifier(pos Position) Token {
 // The first digit has already been consumed.
 func (l *Lexer) scanNumber(pos Position) Token {
 	start := l.pos - 1
-	for isDigit(l.peek()) {
+	for is.Digit(l.peek()) {
 		l.advance()
 	}
-	if l.peek() == '.' && l.pos < len(l.source)-1 && isDigit(l.source[l.pos+1]) {
+	if l.peek() == '.' && l.pos < len(l.source)-1 && is.Digit(l.source[l.pos+1]) {
 		l.advance() // consume '.'
-		for isDigit(l.peek()) {
+		for is.Digit(l.peek()) {
 			l.advance()
 		}
 		return Token{Kind: FLOAT_LIT, Literal: l.source[start:l.pos], Pos: pos}
