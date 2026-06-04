@@ -1586,3 +1586,15 @@ func TestParseTupleExprTrailingComma(t *testing.T) {
 	left := eq.Left.(*ast.TupleExpr)
 	require.Len(t, left.Elements, 2)
 }
+
+func TestParseErrorTrailingTokens(t *testing.T) {
+	// arrange — anything after the closing brace is invalid
+	source := `spec "x" {} junk`
+
+	// act
+	_, errs := Parse(source, "test.spec")
+
+	// assert
+	require.NotEmpty(t, errs)
+	require.Contains(t, errs[0].Message, "unexpected token")
+}
