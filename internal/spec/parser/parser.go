@@ -54,17 +54,17 @@ func (p *parser) parseSpec() *ast.SpecDecl {
 
 	var decls []ast.Decl
 	for !p.at(lexer.RBRACE) && !p.at(lexer.EOF) {
-		before := p.pos
 		decl := p.parseDecl()
 		if decl != nil {
 			decls = append(decls, decl)
 		}
-		if p.pos == before {
-			p.skipToDecl()
-		}
 	}
 
 	p.expect(lexer.RBRACE)
+	if !p.at(lexer.EOF) {
+		tok := p.peek()
+		p.addError(tok, "unexpected token %s after spec declaration", tok.Kind)
+	}
 
 	return &ast.SpecDecl{
 		Name:         nameTok.Literal,
