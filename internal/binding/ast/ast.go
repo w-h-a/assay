@@ -12,6 +12,13 @@ type BindingDecl struct {
 	Pos          Position
 }
 
+// ValidatedBinding wraps a parsed BindingDecl with cross-reference annotations.
+// It is the contract between the binding checker and downstream consumers
+// (the resolver and code generator).
+type ValidatedBinding struct {
+	Binding *BindingDecl
+}
+
 // TypeMapping connects a spec type name to a qualifier.name in the target.
 // The resolver validates the reference against the target package.
 type TypeMapping struct {
