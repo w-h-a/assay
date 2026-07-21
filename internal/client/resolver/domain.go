@@ -5,9 +5,9 @@ package resolver
 type Kind string
 
 const (
-	KindBasic     Kind = "basic"     // int, string, bool
-	KindStruct    Kind = "struct"    // spec records
-	KindInterface Kind = "interface" // error, ...
+	KindBasic     Kind = "basic"
+	KindStruct    Kind = "struct"
+	KindInterface Kind = "interface"
 )
 
 // ResolvedType is a target-language type: where it lives, its name, and its
