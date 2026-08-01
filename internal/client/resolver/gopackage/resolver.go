@@ -72,5 +72,40 @@ func (r *goResolver) Resolve(
 		}
 	}
 
+	for _, m := range decl.FuncMappings {
+		// Skipping methods for now
+		if m.Qualifier != pkg.Name {
+			continue
+		}
+
+		obj := pkg.Types.Scope().Lookup(m.Name)
+		if obj == nil {
+			errs = append(errs, resolver.Error{
+				Message: fmt.Sprintf("func %q not found in package %q", m.Name, decl.PackagePath),
+				Pos:     m.Pos,
+			})
+			continue
+		}
+
+		fn, ok := obj.(*types.Func)
+		if !ok {
+			errs = append(errs, resolver.Error{
+				Message: fmt.Sprintf("%q in package %q is not a func", m.Name, decl.PackagePath),
+				Pos:     m.Pos,
+			})
+			continue
+		}
+
+		if !fn.Exported() {
+			errs = append(errs, resolver.Error{
+				Message: fmt.Sprintf("func %q in package %q is not exported", m.Name, decl.PackagePath),
+				Pos:     m.Pos,
+			})
+			continue
+		}
+
+		resolved.Funcs[m.SpecName] = resolveFunc(fn)
+	}
+
 	return resolved, errs
 }
