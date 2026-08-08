@@ -65,11 +65,7 @@ func (r *goResolver) Resolve(
 			continue
 		}
 
-		resolved.Types[m.SpecName] = resolver.ResolvedType{
-			PackagePath: pkg.PkgPath,
-			Name:        m.Name,
-			Kind:        classifyKind(obj.Type()),
-		}
+		resolved.Types[m.SpecName] = resolveTypeRef(obj.Type())
 	}
 
 	for _, m := range decl.FuncMappings {
